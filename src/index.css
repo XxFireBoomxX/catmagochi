@@ -1,0 +1,56 @@
+:root {
+  --bg: #0b0614;
+  --bg-panel: #150c26;
+  --text: #c9a6ff;
+  --text-soft: #8a6bb0;
+  --card: #120a1f;
+  --border: #7c4dff;
+  --primary: #b388ff;
+  --primary-dark: #9a63ff;
+  --stat-low: #ff5d8f;
+  --stat-mid: #ffb86b;
+  --stat-high: #c9a6ff;
+  --stat-empty: #2a1b40;
+  --shadow: rgba(124, 77, 255, 0.28);
+  --glow: rgba(179, 136, 255, 0.55);
+
+  font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background:
+    repeating-linear-gradient(rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, 0.15) 3px),
+    radial-gradient(circle at top, var(--bg-panel), var(--bg));
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  text-shadow: 0 0 8px var(--glow);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
