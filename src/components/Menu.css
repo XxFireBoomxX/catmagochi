@@ -73,6 +73,14 @@
   text-align: center;
 }
 
+.menu-update-status {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: center;
+  line-height: 1.4;
+}
+
 .menu-history-item {
   border-bottom: 1px solid var(--shadow);
   padding-bottom: 0.5rem;
