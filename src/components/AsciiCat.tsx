@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Mood, Stage } from '../types'
-import { buildFrame } from '../data/asciiCat'
+import { buildFrame, IDLE_FRAME_COUNT } from '../data/asciiCat'
 import './AsciiCat.css'
 
 const EFFECT: Partial<Record<Mood, string>> = {
@@ -15,6 +15,7 @@ const BLINK_OPEN_MS = 2200
 const BLINK_JITTER_MS = 800
 const BLINK_CLOSED_MS = 200
 const REACT_MS = 900
+const IDLE_INTERVAL_MS = 900
 
 export function AsciiCat({
   mood,
@@ -28,6 +29,7 @@ export function AsciiCat({
   onPet: () => boolean
 }) {
   const [frame, setFrame] = useState<0 | 1>(0)
+  const [idleFrame, setIdleFrame] = useState(0)
   const [reacting, setReacting] = useState(false)
   const reactTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -53,6 +55,12 @@ export function AsciiCat({
       clearTimeout(closeTimer)
     }
   }, [mood])
+
+  useEffect(() => {
+    if (IDLE_FRAME_COUNT[stage] <= 1) return
+    const id = setInterval(() => setIdleFrame((f) => f + 1), IDLE_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [stage])
 
   useEffect(() => () => clearTimeout(reactTimer.current), [])
 
@@ -82,7 +90,7 @@ export function AsciiCat({
           }
         }}
       >
-        <pre key={mood}>{buildFrame(mood, frame, stage)}</pre>
+        <pre key={mood} className={`cat-sprite stage-${stage}`}>{buildFrame(mood, frame, stage, idleFrame)}</pre>
       </div>
     </div>
   )

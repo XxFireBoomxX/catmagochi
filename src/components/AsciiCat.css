@@ -53,15 +53,32 @@
 .ascii-screen pre {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: clamp(1.1rem, 5vw, 1.4rem);
-  line-height: 1.4;
+  font-size: clamp(0.85rem, 4.2vw, 1.1rem);
+  line-height: 1.25;
   text-align: center;
   color: var(--text);
   text-shadow: 0 0 10px var(--glow);
-  animation: frame-fade-in 0.2s ease;
+  animation: frame-fade-in 0.2s ease, gentle-bob 3.2s ease-in-out infinite;
 }
 
 @keyframes frame-fade-in {
   from { opacity: 0.3; }
   to { opacity: 1; }
+}
+
+/* Braille sprite: line-height ~1 so the braille dot cells tile vertically
+   into a continuous silhouette. Growth stages render the same art at
+   increasing font sizes. */
+.ascii-screen pre.cat-sprite {
+  line-height: 1.05;
+  text-shadow: 0 0 4px var(--glow);
+}
+
+.cat-sprite.stage-kitten { font-size: clamp(6px, 1.9vw, 8px); }
+.cat-sprite.stage-young { font-size: clamp(7px, 2.3vw, 9.5px); }
+.cat-sprite.stage-adult { font-size: clamp(8px, 2.7vw, 11px); }
+
+@keyframes gentle-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
 }
