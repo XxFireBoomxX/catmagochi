@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react'
 import type { RelayMessage } from '../types'
+import { usePwaUpdate, type PwaUpdateStatus } from '../hooks/usePwaUpdate'
 import './Menu.css'
 
-type MenuView = 'root' | 'history'
+type MenuView = 'root' | 'history' | 'update'
 
 const MENU_ITEMS: { label: string; view: MenuView }[] = [
   { label: 'MESSAGE HISTORY', view: 'history' },
+  { label: 'CHECK FOR UPDATES', view: 'update' },
 ]
+
+const UPDATE_STATUS_TEXT: Record<PwaUpdateStatus, string> = {
+  idle: '',
+  checking: 'Checking for updates...',
+  'up-to-date': "You're on the latest version.",
+  updating: 'Update found and ready. Tap Reload to apply it.',
+  error: "Couldn't check for updates. Make sure you're online.",
+  unsupported: "Updates aren't available yet. Try again in a moment.",
+}
 
 function formatTime(sentAt: number): string {
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
@@ -18,10 +29,16 @@ function formatTime(sentAt: number): string {
 
 export function Menu({ open, history, onClose }: { open: boolean; history: RelayMessage[]; onClose: () => void }) {
   const [view, setView] = useState<MenuView>('root')
+  const { status: updateStatus, checkForUpdate } = usePwaUpdate()
 
   useEffect(() => {
     if (open) setView('root')
   }, [open])
+
+  useEffect(() => {
+    if (view === 'update') checkForUpdate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view])
 
   if (!open) return null
 
@@ -57,6 +74,21 @@ export function Menu({ open, history, onClose }: { open: boolean; history: Relay
                 ))
               )}
             </div>
+            <button className="menu-close" onClick={() => setView('root')}>[ BACK ]</button>
+          </>
+        )}
+
+        {view === 'update' && (
+          <>
+            <div className="menu-title">APP UPDATE</div>
+            <p className="menu-update-status">{UPDATE_STATUS_TEXT[updateStatus]}</p>
+            {updateStatus === 'updating' ? (
+              <button className="menu-item" onClick={() => window.location.reload()}>[ RELOAD NOW ]</button>
+            ) : (
+              <button className="menu-item" onClick={checkForUpdate} disabled={updateStatus === 'checking'}>
+                [ CHECK AGAIN ]
+              </button>
+            )}
             <button className="menu-close" onClick={() => setView('root')}>[ BACK ]</button>
           </>
         )}
