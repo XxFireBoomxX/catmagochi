@@ -66,6 +66,15 @@
   margin-bottom: 0.25rem;
 }
 
+.version-label {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  font-size: 0.7rem;
+  color: var(--text-soft);
+  letter-spacing: 0.05em;
+}
+
 .menu-button {
   position: absolute;
   top: 0.75rem;
