@@ -70,6 +70,12 @@ describe('App', () => {
   })
 
   describe('main game screen', () => {
+    it('shows the app version in the top-left corner', () => {
+      seedSave()
+      render(<App />)
+      expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument()
+    })
+
     it('renders the stage badge and all four stat bars from the save', () => {
       seedSave()
       render(<App />)

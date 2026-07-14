@@ -98,6 +98,7 @@ function App() {
 
   return (
     <div className="game">
+      <div className="version-label">v{__APP_VERSION__}</div>
       <button className="menu-button" onClick={() => setMenuOpen(true)} disabled={gameActive}>[MENU]</button>
 
       <header>
