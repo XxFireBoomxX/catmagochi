@@ -12,8 +12,8 @@ Catmagochi is a Tamagotchi-style virtual cat web app — a personal gift project
 - `npm run build` — type-check (`tsc -b`) then production-build with Vite (also generates the PWA service worker/manifest via `vite-plugin-pwa`)
 - `npm run lint` — run `oxlint`
 - `npm run preview` — serve the production build locally
-- No test suite exists yet.
-- Relay server (optional, for the messaging feature — see `server/README.md`): `cd server && npm install && RELAY_TOKEN=<secret> npm start`.
+- `npm test` — run the frontend test suite once (Vitest); `npm run test:watch` for watch mode, `npm run test:coverage` to also emit a coverage report (thresholds enforced at 90% lines/statements/branches/functions in `vite.config.ts`'s `test.coverage` block — the `test` build task shares the rest of that config, e.g. the `__APP_VERSION__` define, since it's the same file).
+- Relay server (optional, for the messaging feature — see `server/README.md`): `cd server && npm install && RELAY_TOKEN=<secret> npm start`. Its own test suite is separate — plain `node --test`, no Vitest — via `cd server && npm test`; it spawns the real `server.js` as a child process against a temp `DATA_DIR` and drives it over real HTTP/WebSocket, matching the file's own "no framework" style. Vitest's `test.exclude` explicitly skips `server/**` so the two suites don't collide.
 
 ## Architecture
 
@@ -58,3 +58,12 @@ Lets the user push short messages to the app from anywhere, via a self-hosted re
 ### PWA setup
 
 `vite-plugin-pwa` is configured in `vite.config.ts` with an inline manifest (name, theme colors, icons) pointing at `public/favicon.svg`. `registerType: 'autoUpdate'` is used so updates apply without prompting. If you change the app icon, only `public/favicon.svg` needs updating — it's reused for both the favicon and the manifest icons.
+
+### Testing
+
+Frontend tests are Vitest + Testing Library, colocated as `*.test.ts`/`*.test.tsx` next to the source file they cover. Vitest config lives inside `vite.config.ts`'s `test` block rather than a separate `vitest.config.ts`, specifically so it shares the rest of that file (e.g. the `__APP_VERSION__` define `useNativeUpdate` needs). `src/test/setup.ts` wires up `@testing-library/jest-dom` matchers and, in a global `afterEach`, calls RTL `cleanup()`, clears `localStorage`, and resets fake timers/global stubs/mocks — so tests don't need per-file teardown boilerplate for those.
+
+- Anything timer-driven (`AsciiCat`'s blink/idle loops, `YarnGame`'s round timers, `useFlavorText`) is tested with `vi.useFakeTimers()` plus `Math.random` stubbed to a fixed value (usually `0`), then asserted against exact millisecond advances — see any of those `.test.tsx` files for the pattern.
+- `App.test.tsx` mocks `useMessages` and `useFlavorText` outright rather than exercising their real internals (those are covered by their own dedicated test files) — this also sidesteps a real gotcha: this repo's gitignored `.env` may have real `VITE_RELAY_URL`/`VITE_RELAY_TOKEN` values set for local relay testing, and Vite/Vitest auto-loads `.env`, so any test asserting on "relay not configured" behavior must stub those env vars explicitly rather than assume they're unset (see the empty-string stubs in `useMessages.test.ts`).
+- `server/` has its own, separate suite (`server/server.test.js`, run via `node --test`, not Vitest) since it's a standalone Node package with no framework dependency — it spawns the real `server.js` as a child process against a temp `DATA_DIR` and drives it over actual HTTP/WebSocket rather than mocking `http`/`ws`. Vitest's `test.exclude` skips `server/**` so the two runners don't collide over the same `*.test.js` files.
+- Coverage thresholds (lines/statements/branches/functions, all 90%) are enforced in `vite.config.ts`'s `test.coverage.thresholds` — `npm run test:coverage` exits non-zero if any drop below that.
