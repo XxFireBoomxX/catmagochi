@@ -2,6 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Menu } from './Menu'
 import type { RelayMessage } from '../types'
+import type { NotificationSettings } from '../hooks/useNotificationSettings'
+import type { PushStatus } from '../hooks/usePushSubscription'
 
 const mockIsNativePlatform = vi.fn()
 vi.mock('@capacitor/core', () => ({
@@ -18,12 +20,21 @@ vi.mock('../hooks/useNativeUpdate', () => ({
   useNativeUpdate: () => mockUseNativeUpdate(),
 }))
 
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  global: false,
+  message: true,
+  attention: true,
+  update: true,
+}
+
 function setup({
   isNative = false,
   pwaStatus = 'idle',
   nativeStatus = 'idle',
   history = [] as RelayMessage[],
   onClose = vi.fn(),
+  notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
+  pushStatus = 'idle' as PushStatus,
 } = {}) {
   mockIsNativePlatform.mockReturnValue(isNative)
   const pwaCheck = vi.fn()
@@ -31,8 +42,18 @@ function setup({
   const nativeCheck = vi.fn()
   const nativeApply = vi.fn()
   mockUseNativeUpdate.mockReturnValue({ status: nativeStatus, checkForUpdate: nativeCheck, applyUpdate: nativeApply })
-  const utils = render(<Menu open history={history} onClose={onClose} />)
-  return { ...utils, onClose, pwaCheck, nativeCheck, nativeApply }
+  const onUpdateNotificationSettings = vi.fn()
+  const utils = render(
+    <Menu
+      open
+      history={history}
+      onClose={onClose}
+      notificationSettings={notificationSettings}
+      onUpdateNotificationSettings={onUpdateNotificationSettings}
+      pushStatus={pushStatus}
+    />,
+  )
+  return { ...utils, onClose, pwaCheck, nativeCheck, nativeApply, onUpdateNotificationSettings }
 }
 
 describe('Menu', () => {
@@ -53,15 +74,25 @@ describe('Menu', () => {
     mockIsNativePlatform.mockReturnValue(false)
     mockUsePwaUpdate.mockReturnValue({ status: 'idle', checkForUpdate: vi.fn() })
     mockUseNativeUpdate.mockReturnValue({ status: 'idle', checkForUpdate: vi.fn(), applyUpdate: vi.fn() })
-    const { container } = render(<Menu open={false} history={[]} onClose={() => {}} />)
+    const { container } = render(
+      <Menu
+        open={false}
+        history={[]}
+        onClose={() => {}}
+        notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+        onUpdateNotificationSettings={() => {}}
+        pushStatus="idle"
+      />,
+    )
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows the root menu with both items when open', () => {
+  it('shows the root menu with all three items when open', () => {
     setup()
     expect(screen.getByText('MENU')).toBeInTheDocument()
     expect(screen.getByText('MESSAGE HISTORY')).toBeInTheDocument()
     expect(screen.getByText('CHECK FOR UPDATES')).toBeInTheDocument()
+    expect(screen.getByText('SETTINGS')).toBeInTheDocument()
   })
 
   it('calls onClose from the root close button', () => {
@@ -164,7 +195,16 @@ describe('Menu', () => {
       expect(screen.getByText('[ CHECK AGAIN ]')).toBeDisabled()
 
       mockUseNativeUpdate.mockReturnValue({ status: 'downloading', checkForUpdate: vi.fn(), applyUpdate: vi.fn() })
-      rerender(<Menu open history={[]} onClose={() => {}} />)
+      rerender(
+        <Menu
+          open
+          history={[]}
+          onClose={() => {}}
+          notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+          onUpdateNotificationSettings={() => {}}
+          pushStatus="idle"
+        />,
+      )
       expect(screen.getByText('Downloading update...')).toBeInTheDocument()
       expect(screen.getByText('[ CHECK AGAIN ]')).toBeDisabled()
     })
@@ -183,8 +223,102 @@ describe('Menu', () => {
       expect(screen.getByText("You're on the latest version.")).toBeInTheDocument()
 
       mockUseNativeUpdate.mockReturnValue({ status: 'error', checkForUpdate: vi.fn(), applyUpdate: vi.fn() })
-      rerender(<Menu open history={[]} onClose={() => {}} />)
+      rerender(
+        <Menu
+          open
+          history={[]}
+          onClose={() => {}}
+          notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+          onUpdateNotificationSettings={() => {}}
+          pushStatus="idle"
+        />,
+      )
       expect(screen.getByText("Couldn't check for updates. Make sure you're online.")).toBeInTheDocument()
+    })
+  })
+
+  describe('settings view', () => {
+    it('shows the global toggle and per-type toggles, all reflecting current settings', () => {
+      setup({ notificationSettings: { global: true, message: true, attention: false, update: true } })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      expect(screen.getByText('SETTINGS')).toBeInTheDocument()
+      expect(screen.getByText('Notifications')).toBeInTheDocument()
+      expect(screen.getByText('Messages')).toBeInTheDocument()
+      expect(screen.getByText('Cat needs attention')).toBeInTheDocument()
+      expect(screen.getByText('Update available')).toBeInTheDocument()
+    })
+
+    it('reflects message/update being off too, not just attention', () => {
+      setup({ notificationSettings: { global: true, message: false, attention: true, update: false } })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      // global + attention are ON, message + update are OFF
+      expect(screen.getAllByText('[ON]')).toHaveLength(2)
+      expect(screen.getAllByText('[OFF]')).toHaveLength(2)
+    })
+
+    it('toggles the global setting and calls onUpdateNotificationSettings', () => {
+      const { onUpdateNotificationSettings } = setup({
+        notificationSettings: { global: false, message: true, attention: true, update: true },
+      })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      fireEvent.click(screen.getByText('[OFF]')) // only the global row shows [OFF] initially -- per-type rows are disabled but still ON
+      expect(onUpdateNotificationSettings).toHaveBeenCalledWith({ global: true })
+    })
+
+    it('disables per-type toggles while the global setting is off', () => {
+      setup({ notificationSettings: { global: false, message: true, attention: true, update: true } })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      const onButtons = screen.getAllByText('[ON]')
+      for (const button of onButtons) {
+        expect(button).toBeDisabled()
+      }
+    })
+
+    it('toggles a per-type setting when the global setting is on', () => {
+      const { onUpdateNotificationSettings } = setup({
+        notificationSettings: { global: true, message: true, attention: true, update: true },
+      })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      // index 0 is the global toggle itself; 1/2/3 are Messages/Attention/Update
+      const onButtons = screen.getAllByText('[ON]')
+      fireEvent.click(onButtons[1])
+      expect(onUpdateNotificationSettings).toHaveBeenCalledWith({ message: false })
+      fireEvent.click(onButtons[2])
+      expect(onUpdateNotificationSettings).toHaveBeenCalledWith({ attention: false })
+      fireEvent.click(onButtons[3])
+      expect(onUpdateNotificationSettings).toHaveBeenCalledWith({ update: false })
+    })
+
+    it('shows a status message for unsupported/denied/error push states', () => {
+      const { rerender } = setup({ pushStatus: 'unsupported' })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      expect(screen.getByText(/aren't supported/)).toBeInTheDocument()
+
+      rerender(
+        <Menu
+          open
+          history={[]}
+          onClose={() => {}}
+          notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+          onUpdateNotificationSettings={() => {}}
+          pushStatus="denied"
+        />,
+      )
+      expect(screen.getByText(/blocked/)).toBeInTheDocument()
+    })
+
+    it('shows no status message for idle/subscribed/unsubscribed push states', () => {
+      setup({ pushStatus: 'subscribed' })
+      fireEvent.click(screen.getByText('SETTINGS'))
+      expect(screen.queryByText(/not supported/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/blocked/)).not.toBeInTheDocument()
+    })
+
+    it('returns to the root view on back', () => {
+      setup()
+      fireEvent.click(screen.getByText('SETTINGS'))
+      fireEvent.click(screen.getByText('[ BACK ]'))
+      expect(screen.getByText('MENU')).toBeInTheDocument()
     })
   })
 
@@ -193,11 +327,38 @@ describe('Menu', () => {
     mockIsNativePlatform.mockReturnValue(false)
     mockUsePwaUpdate.mockReturnValue({ status: 'idle', checkForUpdate: vi.fn() })
     mockUseNativeUpdate.mockReturnValue({ status: 'idle', checkForUpdate: vi.fn(), applyUpdate: vi.fn() })
-    const { rerender } = render(<Menu open history={[]} onClose={onClose} />)
+    const { rerender } = render(
+      <Menu
+        open
+        history={[]}
+        onClose={onClose}
+        notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+        onUpdateNotificationSettings={() => {}}
+        pushStatus="idle"
+      />,
+    )
     fireEvent.click(screen.getByText('MESSAGE HISTORY'))
     expect(screen.getByText('MESSAGE HISTORY')).toBeInTheDocument()
-    rerender(<Menu open={false} history={[]} onClose={onClose} />)
-    rerender(<Menu open history={[]} onClose={onClose} />)
+    rerender(
+      <Menu
+        open={false}
+        history={[]}
+        onClose={onClose}
+        notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+        onUpdateNotificationSettings={() => {}}
+        pushStatus="idle"
+      />,
+    )
+    rerender(
+      <Menu
+        open
+        history={[]}
+        onClose={onClose}
+        notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
+        onUpdateNotificationSettings={() => {}}
+        pushStatus="idle"
+      />,
+    )
     expect(screen.getByText('MENU')).toBeInTheDocument()
   })
 })

@@ -66,6 +66,23 @@
   margin-bottom: 0.25rem;
 }
 
+.name-button {
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.name-button:hover {
+  text-shadow: 0 0 14px var(--glow);
+}
+
 .version-label {
   position: absolute;
   top: 0.75rem;
@@ -99,17 +116,54 @@
   cursor: not-allowed;
 }
 
-.mood-label {
-  color: var(--text-soft);
-  margin: 0.2rem 0 0.5rem;
+.floating-caption {
+  position: absolute;
+  pointer-events: none;
+  max-width: 65%;
+  text-align: center;
+  color: var(--primary);
+  text-shadow:
+    -1px -1px 0 var(--bg),
+    1px -1px 0 var(--bg),
+    -1px 1px 0 var(--bg),
+    1px 1px 0 var(--bg),
+    0 0 8px var(--glow);
   font-size: 0.85rem;
+  font-weight: 600;
+  z-index: 5;
+  animation: caption-float 2.6s ease-out forwards;
+}
+
+@keyframes caption-float {
+  0% { transform: translate(-50%, 0); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translate(-50%, -30px); opacity: 0; }
 }
 
 .stage-label {
+  display: inline-block;
   color: var(--primary);
-  margin: 0 0 0.5rem;
+  margin: 0.35rem 0 0.5rem;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.stage-label:hover {
+  text-shadow: 0 0 8px var(--glow);
+}
+
+.growth-progress {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+.growth-progress-maxed {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-style: italic;
 }
 
 .grow-banner {

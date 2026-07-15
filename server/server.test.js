@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import webpush from 'web-push'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = 19081
@@ -224,6 +225,167 @@ describe('catmagochi relay server', () => {
     await new Promise((r) => setTimeout(r, 100))
     ws.close()
   }
+
+  const fakeSubscription = {
+    endpoint: 'https://push.example.test/fake-endpoint',
+    keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' },
+  }
+
+  test('POST /push/subscribe rejects an invalid token', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'wrong', subscription: fakeSubscription, types: {} }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  test('POST /push/subscribe rejects a malformed subscription', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: { endpoint: 'x' }, types: {} }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('POST /push/subscribe stores a subscription, reporting pushEnabled: false without VAPID keys configured', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: fakeSubscription, types: { message: true } }),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.ok, true)
+    assert.equal(body.pushEnabled, false)
+
+    const stored = JSON.parse(readFileSync(join(dataDir, 'subscriptions.json'), 'utf-8'))
+    assert.ok(stored.some((s) => s.subscription.endpoint === fakeSubscription.endpoint))
+  })
+
+  test('POST /push/subscribe with the same endpoint again replaces rather than duplicates', async () => {
+    await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: fakeSubscription, types: { message: true } }),
+    })
+    await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: fakeSubscription, types: { message: false } }),
+    })
+    const stored = JSON.parse(readFileSync(join(dataDir, 'subscriptions.json'), 'utf-8'))
+    const matches = stored.filter((s) => s.subscription.endpoint === fakeSubscription.endpoint)
+    assert.equal(matches.length, 1)
+    assert.equal(matches[0].types.message, false)
+  })
+
+  test('POST /push/unsubscribe rejects an invalid token', async () => {
+    const res = await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'wrong', endpoint: fakeSubscription.endpoint }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  test('POST /push/unsubscribe removes a stored subscription', async () => {
+    await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: fakeSubscription, types: {} }),
+    })
+    const res = await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, endpoint: fakeSubscription.endpoint }),
+    })
+    assert.equal(res.status, 200)
+    const stored = JSON.parse(readFileSync(join(dataDir, 'subscriptions.json'), 'utf-8'))
+    assert.ok(!stored.some((s) => s.subscription.endpoint === fakeSubscription.endpoint))
+  })
+
+  test('POST /push/notify-update rejects an invalid token', async () => {
+    const res = await fetch(`${BASE}/push/notify-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'wrong', version: '1.2.3' }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  test('POST /push/notify-update succeeds as a no-op without VAPID keys configured', async () => {
+    const res = await fetch(`${BASE}/push/notify-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, version: '1.2.3' }),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.ok, true)
+  })
+})
+
+describe('catmagochi relay server with push enabled', () => {
+  const PUSH_PORT = 19083
+  const PUSH_BASE = `http://localhost:${PUSH_PORT}`
+  let child
+  let dataDir
+
+  before(async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-push-test-'))
+    // Generated fresh per test run, never committed -- a hardcoded keypair
+    // here would be a real (if low-stakes) credential sitting in git history.
+    const vapidKeys = webpush.generateVAPIDKeys()
+    child = spawn(process.execPath, ['server.js'], {
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        PORT: String(PUSH_PORT),
+        RELAY_TOKEN: TOKEN,
+        DATA_DIR: dataDir,
+        VAPID_PUBLIC_KEY: vapidKeys.publicKey,
+        VAPID_PRIVATE_KEY: vapidKeys.privateKey,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    await waitForServer(PUSH_BASE)
+  })
+
+  after(() => {
+    child.kill()
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  test('reports pushEnabled: true once VAPID keys are configured', async () => {
+    const res = await fetch(`${PUSH_BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: {
+          endpoint: 'https://push.example.test/does-not-exist',
+          keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' },
+        },
+        types: { message: true },
+      }),
+    })
+    const body = await res.json()
+    assert.equal(body.pushEnabled, true)
+  })
+
+  test('a subscription pointing nowhere real does not crash /send (delivery failure is caught, not thrown)', async () => {
+    const res = await fetch(`${PUSH_BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, text: 'hello with a subscriber present' }),
+    })
+    assert.equal(res.status, 200)
+    // server should still be responsive right after
+    const health = await fetch(PUSH_BASE)
+    assert.equal(health.status, 200)
+  })
 })
 
 describe('catmagochi relay server startup', () => {

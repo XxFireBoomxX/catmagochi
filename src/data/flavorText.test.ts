@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FLAVOR_TEXT, GENERIC_FLAVOR, MOOD_LABEL } from './flavorText'
+import { ACTION_FLAVOR, FLAVOR_TEXT, GENERIC_FLAVOR, MOOD_LABEL } from './flavorText'
 import type { Mood } from '../types'
 
 const ALL_MOODS: Mood[] = ['happy', 'content', 'hungry', 'tired', 'dirty', 'sad', 'sleeping']
@@ -35,6 +35,20 @@ describe('GENERIC_FLAVOR', () => {
     expect(GENERIC_FLAVOR.length).toBeGreaterThan(0)
     for (const line of GENERIC_FLAVOR) {
       expect(typeof line).toBe('string')
+    }
+  })
+})
+
+describe('ACTION_FLAVOR', () => {
+  it('has a non-empty pool of strings for every action type', () => {
+    const types = ['feed', 'clean', 'sleep', 'wake', 'pet'] as const
+    for (const type of types) {
+      const lines = ACTION_FLAVOR[type]
+      expect(Array.isArray(lines)).toBe(true)
+      expect(lines.length).toBeGreaterThan(0)
+      for (const line of lines) {
+        expect(typeof line).toBe('string')
+      }
     }
   })
 })

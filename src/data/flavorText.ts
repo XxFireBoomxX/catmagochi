@@ -27,3 +27,14 @@ export const GENERIC_FLAVOR: string[] = [
   'blinks slowly at you',
   'stretches',
 ]
+
+// A small chance of one of these replacing the mood caption right after an
+// action, instead of the usual steady-state MOOD_LABEL line — see
+// ACTION_FLAVOR_CHANCE in App.tsx.
+export const ACTION_FLAVOR: Record<'feed' | 'clean' | 'sleep' | 'wake' | 'pet', string[]> = {
+  feed: ['smacks its lips', 'goes back for seconds', 'gives an approving nod'],
+  clean: ['smells like fresh linen', 'preens proudly', 'shakes off the last suds'],
+  sleep: ['already snoring', 'curls into the tightest ball'],
+  wake: ['stretches out every limb', 'blinks awake slowly'],
+  pet: ['leans into your hand', 'melts a little', 'purrs extra loud'],
+}

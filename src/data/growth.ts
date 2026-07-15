@@ -18,3 +18,30 @@ export const GROW_MESSAGE: Partial<Record<Stage, string>> = {
   young: 'GREW INTO A YOUNG CAT!',
   adult: 'GREW INTO AN ADULT CAT!',
 }
+
+export interface GrowthProgress {
+  stage: Stage
+  nextStage: Stage | null
+  current: number
+  needed: number
+  percent: number
+}
+
+// Progress *within the current stage's band*, not raw growth/threshold --
+// e.g. a young cat just past the young threshold should read as ~0%
+// progress toward adult, not >100% against the young threshold it already
+// cleared.
+export function growthProgress(growth: number): GrowthProgress {
+  const stage = deriveStage(growth)
+  if (stage === 'kitten') {
+    const needed = GROWTH_THRESHOLDS.young
+    return { stage, nextStage: 'young', current: growth, needed, percent: Math.min(100, (growth / needed) * 100) }
+  }
+  if (stage === 'young') {
+    const start = GROWTH_THRESHOLDS.young
+    const needed = GROWTH_THRESHOLDS.adult - start
+    const current = growth - start
+    return { stage, nextStage: 'adult', current, needed, percent: Math.min(100, (current / needed) * 100) }
+  }
+  return { stage, nextStage: null, current: 0, needed: 0, percent: 100 }
+}

@@ -3,14 +3,23 @@ import { Capacitor } from '@capacitor/core'
 import type { RelayMessage } from '../types'
 import { usePwaUpdate, type PwaUpdateStatus } from '../hooks/usePwaUpdate'
 import { useNativeUpdate, type NativeUpdateStatus } from '../hooks/useNativeUpdate'
+import type { NotificationSettings } from '../hooks/useNotificationSettings'
+import type { PushStatus } from '../hooks/usePushSubscription'
 import './Menu.css'
 
-type MenuView = 'root' | 'history' | 'update'
+type MenuView = 'root' | 'history' | 'update' | 'settings'
 
 const MENU_ITEMS: { label: string; view: MenuView }[] = [
   { label: 'MESSAGE HISTORY', view: 'history' },
   { label: 'CHECK FOR UPDATES', view: 'update' },
+  { label: 'SETTINGS', view: 'settings' },
 ]
+
+const PUSH_STATUS_TEXT: Partial<Record<PushStatus, string>> = {
+  unsupported: "Push notifications aren't supported on this browser/device.",
+  denied: 'Notifications are blocked — enable them in your browser/OS settings.',
+  error: "Couldn't set up notifications. Check your connection and try again.",
+}
 
 // Native (Capacitor APK): a GitHub-releases web-bundle OTA check.
 // Browser/PWA: the Service Worker check — kept entirely separate hooks
@@ -42,7 +51,21 @@ function formatTime(sentAt: number): string {
   return `${months[d.getMonth()]} ${d.getDate()} ${hh}:${mm}`
 }
 
-export function Menu({ open, history, onClose }: { open: boolean; history: RelayMessage[]; onClose: () => void }) {
+export function Menu({
+  open,
+  history,
+  onClose,
+  notificationSettings,
+  onUpdateNotificationSettings,
+  pushStatus,
+}: {
+  open: boolean
+  history: RelayMessage[]
+  onClose: () => void
+  notificationSettings: NotificationSettings
+  onUpdateNotificationSettings: (patch: Partial<NotificationSettings>) => void
+  pushStatus: PushStatus
+}) {
   const [view, setView] = useState<MenuView>('root')
   const isNative = Capacitor.isNativePlatform()
   const pwaUpdate = usePwaUpdate()
@@ -124,6 +147,58 @@ export function Menu({ open, history, onClose }: { open: boolean; history: Relay
                 [ CHECK AGAIN ]
               </button>
             )}
+            <button className="menu-close" onClick={() => setView('root')}>[ BACK ]</button>
+          </>
+        )}
+
+        {view === 'settings' && (
+          <>
+            <div className="menu-title">SETTINGS</div>
+            <div className="menu-settings-list">
+              <div className="menu-settings-row">
+                <span className="menu-settings-label">Notifications</span>
+                <button
+                  className={`menu-toggle${notificationSettings.global ? ' on' : ''}`}
+                  onClick={() => onUpdateNotificationSettings({ global: !notificationSettings.global })}
+                >
+                  {notificationSettings.global ? '[ON]' : '[OFF]'}
+                </button>
+              </div>
+              <div className="menu-settings-row menu-settings-sub">
+                <span className="menu-settings-label">Messages</span>
+                <button
+                  className={`menu-toggle${notificationSettings.message ? ' on' : ''}`}
+                  onClick={() => onUpdateNotificationSettings({ message: !notificationSettings.message })}
+                  disabled={!notificationSettings.global}
+                >
+                  {notificationSettings.message ? '[ON]' : '[OFF]'}
+                </button>
+              </div>
+              <div className="menu-settings-row menu-settings-sub">
+                <span className="menu-settings-label">Cat needs attention</span>
+                <button
+                  className={`menu-toggle${notificationSettings.attention ? ' on' : ''}`}
+                  onClick={() => onUpdateNotificationSettings({ attention: !notificationSettings.attention })}
+                  disabled={!notificationSettings.global}
+                >
+                  {notificationSettings.attention ? '[ON]' : '[OFF]'}
+                </button>
+              </div>
+              <div className="menu-settings-row menu-settings-sub">
+                <span className="menu-settings-label">Update available</span>
+                <button
+                  className={`menu-toggle${notificationSettings.update ? ' on' : ''}`}
+                  onClick={() => onUpdateNotificationSettings({ update: !notificationSettings.update })}
+                  disabled={!notificationSettings.global}
+                >
+                  {notificationSettings.update ? '[ON]' : '[OFF]'}
+                </button>
+              </div>
+            </div>
+            <p className="menu-settings-note">
+              "Cat needs attention" only fires while the app is open — the others work even when it's closed.
+            </p>
+            {PUSH_STATUS_TEXT[pushStatus] && <p className="menu-update-status">{PUSH_STATUS_TEXT[pushStatus]}</p>}
             <button className="menu-close" onClick={() => setView('root')}>[ BACK ]</button>
           </>
         )}

@@ -1,0 +1,29 @@
+.stats-window-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.stats-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--shadow);
+}
+
+.stats-row:last-child {
+  border-bottom: none;
+}
+
+.stats-row span:first-child {
+  color: var(--text-soft);
+}
+
+.stats-row span:last-child {
+  color: var(--text);
+  font-weight: 600;
+}

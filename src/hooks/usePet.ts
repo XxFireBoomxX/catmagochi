@@ -20,6 +20,11 @@ function defaultSave(name: string): PetSave {
     sleeping: false,
     lastUpdate: Date.now(),
     growth: 0,
+    adoptedAt: Date.now(),
+    totalFeeds: 0,
+    totalPlays: 0,
+    totalCleans: 0,
+    totalPets: 0,
   }
 }
 
@@ -27,7 +32,18 @@ function loadSave(): PetSave | null {
   const raw = localStorage.getItem(SAVE_KEY)
   if (!raw) return null
   try {
-    return { growth: 0, ...(JSON.parse(raw) as Partial<PetSave>) } as PetSave
+    // Saves from before a given field existed merge in a default -- adoptedAt
+    // can't recover the real original date, so it just starts counting from
+    // whenever the save is first loaded post-upgrade (best-effort, not exact).
+    return {
+      growth: 0,
+      adoptedAt: Date.now(),
+      totalFeeds: 0,
+      totalPlays: 0,
+      totalCleans: 0,
+      totalPets: 0,
+      ...(JSON.parse(raw) as Partial<PetSave>),
+    } as PetSave
   } catch {
     return null
   }
@@ -100,6 +116,7 @@ export function usePet() {
       return {
         ...current,
         growth: current.growth + 3,
+        totalFeeds: current.totalFeeds + 1,
         stats: {
           ...current.stats,
           fullness: clamp(current.stats.fullness + 25),
@@ -115,6 +132,7 @@ export function usePet() {
       return {
         ...current,
         growth: current.growth + 1 + 2 * hits,
+        totalPlays: current.totalPlays + 1,
         stats: {
           ...current.stats,
           happiness: clamp(current.stats.happiness + 2 + 5 * hits),
@@ -129,7 +147,12 @@ export function usePet() {
   const clean = useCallback(() => {
     setSave((current) => {
       if (!current || current.sleeping) return current
-      return { ...current, growth: current.growth + 2, stats: { ...current.stats, cleanliness: clamp(current.stats.cleanliness + 30) } }
+      return {
+        ...current,
+        growth: current.growth + 2,
+        totalCleans: current.totalCleans + 1,
+        stats: { ...current.stats, cleanliness: clamp(current.stats.cleanliness + 30) },
+      }
     })
   }, [])
 
@@ -145,7 +168,9 @@ export function usePet() {
     const now = Date.now()
     if (now - lastPetAt.current < PET_COOLDOWN_MS) return false
     lastPetAt.current = now
-    setSave((c) => (c ? { ...c, growth: c.growth + 1, stats: { ...c.stats, happiness: clamp(c.stats.happiness + 3) } } : c))
+    setSave((c) =>
+      c ? { ...c, growth: c.growth + 1, totalPets: c.totalPets + 1, stats: { ...c.stats, happiness: clamp(c.stats.happiness + 3) } } : c,
+    )
     return true
   }, [])
 

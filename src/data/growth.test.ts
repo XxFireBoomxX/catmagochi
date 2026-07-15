@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveStage, GROW_MESSAGE, GROWTH_THRESHOLDS, STAGE_LABEL } from './growth'
+import { deriveStage, growthProgress, GROW_MESSAGE, GROWTH_THRESHOLDS, STAGE_LABEL } from './growth'
 import type { Stage } from '../types'
 
 describe('deriveStage', () => {
@@ -41,5 +41,27 @@ describe('GROW_MESSAGE', () => {
   it('has messages for young and adult transitions', () => {
     expect(GROW_MESSAGE.young).toContain('YOUNG CAT')
     expect(GROW_MESSAGE.adult).toContain('ADULT CAT')
+  })
+})
+
+describe('growthProgress', () => {
+  it('tracks progress toward young while a kitten', () => {
+    expect(growthProgress(0)).toEqual({ stage: 'kitten', nextStage: 'young', current: 0, needed: 40, percent: 0 })
+    expect(growthProgress(20)).toEqual({ stage: 'kitten', nextStage: 'young', current: 20, needed: 40, percent: 50 })
+  })
+
+  it('tracks progress toward adult while young, relative to the young threshold (not raw growth)', () => {
+    expect(growthProgress(40)).toEqual({ stage: 'young', nextStage: 'adult', current: 0, needed: 80, percent: 0 })
+    expect(growthProgress(80)).toEqual({ stage: 'young', nextStage: 'adult', current: 40, needed: 80, percent: 50 })
+  })
+
+  it('reports 100% and no next stage once adult', () => {
+    expect(growthProgress(120)).toEqual({ stage: 'adult', nextStage: null, current: 0, needed: 0, percent: 100 })
+    expect(growthProgress(500)).toEqual({ stage: 'adult', nextStage: null, current: 0, needed: 0, percent: 100 })
+  })
+
+  it('never reports over 100% even exactly at a threshold boundary', () => {
+    expect(growthProgress(GROWTH_THRESHOLDS.young).percent).toBeLessThanOrEqual(100)
+    expect(growthProgress(GROWTH_THRESHOLDS.adult).percent).toBeLessThanOrEqual(100)
   })
 })
