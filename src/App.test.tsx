@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import type { PetSave, RelayMessage } from './types'
+import { START_TOTAL_MS } from './components/StartScreen'
+import type { CareEventType, PetSave, RelayMessage } from './types'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const NOW = new Date('2026-01-01T00:00:00.000Z').getTime()
@@ -16,6 +17,20 @@ vi.mock('./hooks/useMessages', () => ({
 
 vi.mock('./hooks/useFlavorText', () => ({
   useFlavorText: (mood: string) => `is ${mood} (mocked)`,
+}))
+
+// Mocked the same way useMessages is above -- real reconnect/backoff
+// behavior is covered by useCareEvents.test.ts; here we only care about
+// App wiring emit() to local actions and onEvent to applyRemoteEvent.
+// Capturing onEvent lets tests simulate an event arriving from another
+// device by just calling it directly, without a real WebSocket.
+const mockEmit = vi.fn()
+let capturedOnCareEvent: ((id: string, type: CareEventType, hits?: number) => void) | null = null
+vi.mock('./hooks/useCareEvents', () => ({
+  useCareEvents: (onEvent: (id: string, type: CareEventType, hits?: number) => void) => {
+    capturedOnCareEvent = onEvent
+    return { emit: mockEmit }
+  },
 }))
 
 function seedSave(overrides: Partial<PetSave> = {}) {
@@ -40,27 +55,66 @@ function getSave(): PetSave {
   return JSON.parse(localStorage.getItem(SAVE_KEY)!)
 }
 
+// Every test below cares about what's underneath the boot splash, not the
+// splash itself (that's covered by its own describe block, and in full by
+// StartScreen.test.tsx) -- so render past it by default.
+function renderApp() {
+  const result = render(<App />)
+  act(() => {
+    vi.advanceTimersByTime(START_TOTAL_MS)
+  })
+  return result
+}
+
 describe('App', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     mockMessages = []
     mockDismiss.mockClear()
+    mockEmit.mockClear()
+    capturedOnCareEvent = null
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
+  describe('start screen', () => {
+    it('shows the boot screen first, before either the name screen or the game', () => {
+      seedSave()
+      render(<App />)
+      expect(screen.getByRole('heading', { name: 'Catmagochi' })).toBeInTheDocument()
+      expect(screen.queryByText('[FEED]')).not.toBeInTheDocument()
+    })
+
+    it('reveals the name screen once the boot duration elapses, when there is no save', () => {
+      render(<App />)
+      act(() => {
+        vi.advanceTimersByTime(START_TOTAL_MS)
+      })
+      expect(screen.getByPlaceholderText("Kitten's name")).toBeInTheDocument()
+    })
+
+    it('reveals the game screen once the boot duration elapses, when a save exists', () => {
+      seedSave()
+      render(<App />)
+      act(() => {
+        vi.advanceTimersByTime(START_TOTAL_MS)
+      })
+      expect(screen.getByText('[FEED]')).toBeInTheDocument()
+    })
+  })
+
   describe('adoption flow', () => {
     it('shows the name screen when there is no save yet', () => {
-      render(<App />)
+      renderApp()
       expect(screen.getByText('Catmagochi')).toBeInTheDocument()
       expect(screen.getByPlaceholderText("Kitten's name")).toBeInTheDocument()
     })
 
     it('creates a pet with the entered name and shows the game screen', () => {
-      render(<App />)
+      renderApp()
       fireEvent.change(screen.getByPlaceholderText("Kitten's name"), { target: { value: 'Tama' } })
       fireEvent.click(screen.getByText('[ ADOPT ]'))
       expect(screen.getByRole('heading', { name: 'Tama' })).toBeInTheDocument()
@@ -68,7 +122,7 @@ describe('App', () => {
     })
 
     it('falls back to the default name when submitted blank', () => {
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[ ADOPT ]'))
       expect(screen.getByRole('heading', { name: 'Cat' })).toBeInTheDocument()
     })
@@ -77,13 +131,13 @@ describe('App', () => {
   describe('main game screen', () => {
     it('shows the app version in the top-left corner', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument()
     })
 
     it('pops the mood caption up at a randomized, bounded position instead of a fixed spot', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       const caption = screen.getByText('Mochi is happy (mocked)')
       expect(caption).toHaveAttribute('aria-live', 'polite')
       const top = Number.parseFloat(caption.style.top)
@@ -97,7 +151,7 @@ describe('App', () => {
     it('replaces the popped caption (new DOM node) whenever the underlying text changes', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0)
       seedSave()
-      render(<App />)
+      renderApp()
       const first = screen.getByText('Mochi is happy (mocked)')
       fireEvent.click(screen.getByText('[FEED]')) // 0 < ACTION_FLAVOR_CHANCE, bonus line triggers
       expect(screen.queryByText('Mochi is happy (mocked)')).not.toBeInTheDocument()
@@ -107,7 +161,7 @@ describe('App', () => {
 
     it('renders the stage badge and all four stat bars from the save', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       expect(screen.getByText('[KITTEN]')).toBeInTheDocument()
       expect(screen.getByRole('progressbar', { name: 'Fullness' })).toHaveAttribute('aria-valuenow', '80')
       expect(screen.getByRole('progressbar', { name: 'Happiness' })).toHaveAttribute('aria-valuenow', '80')
@@ -117,7 +171,7 @@ describe('App', () => {
 
     it('feeding increases fullness and briefly pulses the fullness bar', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[FEED]'))
       expect(getSave().stats.fullness).toBe(100)
       const fill = screen.getByRole('progressbar', { name: 'Fullness' }).querySelector('.stat-fill')
@@ -130,14 +184,14 @@ describe('App', () => {
 
     it('cleaning increases cleanliness', () => {
       seedSave({ stats: { fullness: 80, happiness: 80, energy: 80, cleanliness: 40 } })
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[CLEAN]'))
       expect(getSave().stats.cleanliness).toBe(70)
     })
 
     it('sleep toggles to wake, and disables feed/play/clean while asleep', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[SLEEP]'))
       expect(getSave().sleeping).toBe(true)
       expect(screen.getByText('[WAKE]')).toBeInTheDocument()
@@ -155,7 +209,7 @@ describe('App', () => {
 
     it('petting the cat increases happiness via the real AsciiCat integration', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(getSave().stats.happiness).toBe(83)
     })
@@ -164,21 +218,21 @@ describe('App', () => {
   describe('action juice (cues + bonus flavor)', () => {
     it('shows a feed-specific glyph on the cat after feeding', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[FEED]'))
       expect(document.querySelector('.cat-effect')?.textContent).toBe('nom nom')
     })
 
     it('shows a clean-specific glyph on the cat after cleaning', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[CLEAN]'))
       expect(document.querySelector('.cat-effect')?.textContent).toBe('*scrub*')
     })
 
     it('shows sleep/wake-specific glyphs on toggling sleep', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[SLEEP]'))
       expect(document.querySelector('.cat-effect')?.textContent).toBe('zzz')
       fireEvent.click(screen.getByText('[WAKE]'))
@@ -188,7 +242,7 @@ describe('App', () => {
     it('occasionally replaces the mood caption with a bonus reaction line after an action, then reverts', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0)
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[FEED]'))
       expect(screen.getByText(/smacks its lips/)).toBeInTheDocument()
       act(() => {
@@ -201,7 +255,7 @@ describe('App', () => {
     it('does not show a bonus line when the random chance misses', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0.9)
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[FEED]'))
       expect(screen.getByText('Mochi is happy (mocked)')).toBeInTheDocument()
     })
@@ -209,7 +263,7 @@ describe('App', () => {
     it('can also show a bonus line after a successful pet', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0)
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(screen.getByText(/leans into your hand/)).toBeInTheDocument()
     })
@@ -217,7 +271,7 @@ describe('App', () => {
     it('does not show a bonus line for a pet that fails its cooldown', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0)
       seedSave()
-      render(<App />)
+      renderApp()
       const catButton = screen.getByRole('button', { name: 'Pet Mochi' })
       fireEvent.click(catButton) // applies, growth +1
       fireEvent.click(catButton) // still on cooldown, no-op
@@ -228,7 +282,7 @@ describe('App', () => {
   describe('mini-game panel swap', () => {
     it('replaces the cat with the yarn game while playing, and disables other actions', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByRole('button', { name: 'Catch the yarn' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
@@ -240,7 +294,7 @@ describe('App', () => {
     it('applies playGame stats and restores the cat panel once the game completes', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0)
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
       for (let i = 0; i < 3; i++) {
         act(() => {
@@ -264,7 +318,7 @@ describe('App', () => {
     it('shows the message panel instead of the cat when a message is queued', () => {
       seedSave()
       mockMessages = [{ id: 'm1', text: 'hi from home', sentAt: NOW }]
-      render(<App />)
+      renderApp()
       expect(screen.getByText('hi from home')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
       expect(screen.getByText('[FEED]')).toBeDisabled()
@@ -272,7 +326,7 @@ describe('App', () => {
 
     it('does not let an incoming message interrupt an in-progress mini-game', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByRole('button', { name: 'Catch the yarn' })).toBeInTheDocument()
 
@@ -290,7 +344,7 @@ describe('App', () => {
     it('dismissing a message acks it, records history, and bumps happiness', () => {
       seedSave()
       mockMessages = [{ id: 'm1', text: 'hi from home', sentAt: NOW }]
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Dismiss message' }))
       expect(mockDismiss).toHaveBeenCalledWith('m1')
       expect(getSave().stats.happiness).toBe(85)
@@ -299,16 +353,120 @@ describe('App', () => {
     })
   })
 
+  describe('shared-pet sync', () => {
+    it('emits a care event when feeding', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[FEED]'))
+      expect(mockEmit).toHaveBeenCalledTimes(1)
+      const [id, type, hits] = mockEmit.mock.calls[0]
+      expect(typeof id).toBe('string')
+      expect(type).toBe('feed')
+      expect(hits).toBeUndefined()
+    })
+
+    it('emits a care event when cleaning', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[CLEAN]'))
+      expect(mockEmit).toHaveBeenCalledTimes(1)
+      expect(mockEmit.mock.calls[0][1]).toBe('clean')
+    })
+
+    it('emits a care event when petting', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
+      expect(mockEmit).toHaveBeenCalledTimes(1)
+      expect(mockEmit.mock.calls[0][1]).toBe('pet')
+    })
+
+    it('emits a care event with the hit count when a mini-game completes', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      for (let i = 0; i < 3; i++) {
+        act(() => {
+          vi.advanceTimersByTime(500)
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Catch the yarn' }))
+        act(() => {
+          vi.advanceTimersByTime(600)
+        })
+      }
+      act(() => {
+        vi.advanceTimersByTime(1_600)
+      })
+      expect(mockEmit).toHaveBeenCalledTimes(1)
+      expect(mockEmit.mock.calls[0][1]).toBe('play')
+      expect(mockEmit.mock.calls[0][2]).toBe(3)
+    })
+
+    it('applies an incoming remote care event to the save and pulses the affected stat', () => {
+      seedSave()
+      renderApp()
+      act(() => {
+        capturedOnCareEvent?.('remote-1', 'feed')
+      })
+      expect(getSave().stats.fullness).toBe(100)
+      expect(getSave().growth).toBe(3)
+      const fill = screen.getByRole('progressbar', { name: 'Fullness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
+    })
+
+    it('shows the same reaction glyph for a remote feed as a local one', () => {
+      seedSave()
+      renderApp()
+      act(() => {
+        capturedOnCareEvent?.('remote-1', 'feed')
+      })
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('nom nom')
+    })
+
+    it('a remote pet event pulses happiness without a feed/clean-style glyph cue', () => {
+      seedSave()
+      renderApp()
+      act(() => {
+        capturedOnCareEvent?.('remote-1', 'pet')
+      })
+      expect(getSave().stats.happiness).toBe(83)
+      expect(getSave().totalPets).toBe(1)
+      const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
+    })
+
+    it('does not double-apply a remote event that echoes an id this device already emitted', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[FEED]')) // local: growth 3, fullness 100
+      const emittedId = mockEmit.mock.calls[0][0] as string
+      act(() => {
+        capturedOnCareEvent?.(emittedId, 'feed') // relay echoing our own event back
+      })
+      expect(getSave().growth).toBe(3)
+    })
+
+    it('a remote event does not itself trigger another outgoing emit', () => {
+      seedSave()
+      renderApp()
+      act(() => {
+        capturedOnCareEvent?.('remote-1', 'clean')
+      })
+      expect(mockEmit).not.toHaveBeenCalled()
+    })
+  })
+
   describe('growth banner', () => {
     it('shows no banner for the initial kitten stage', () => {
       seedSave({ growth: 0 })
-      render(<App />)
+      renderApp()
       expect(screen.queryByText(/GREW INTO/)).not.toBeInTheDocument()
     })
 
     it('shows a banner on transitioning to young, then auto-dismisses it', () => {
       seedSave({ growth: 39 }) // one pet (+1 growth) away from the young threshold (40)
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(screen.getByText('Mochi GREW INTO A YOUNG CAT!')).toBeInTheDocument()
       expect(screen.getByText('[YOUNG CAT]')).toBeInTheDocument()
@@ -322,13 +480,13 @@ describe('App', () => {
   describe('growth progress toggle', () => {
     it('is hidden until the stage badge is tapped', () => {
       seedSave({ growth: 20 })
-      render(<App />)
+      renderApp()
       expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
     })
 
     it('shows progress toward the next stage when tapped, and hides again on a second tap', () => {
       seedSave({ growth: 20 }) // kitten, 20/40 = 50% toward young
-      render(<App />)
+      renderApp()
       const badge = screen.getByText('[KITTEN]')
       fireEvent.click(badge)
       expect(screen.getByRole('progressbar', { name: 'Growth to YOUNG CAT' })).toHaveAttribute('aria-valuenow', '50')
@@ -341,7 +499,7 @@ describe('App', () => {
 
     it('toggles via keyboard (Enter/Space) as well as click', () => {
       seedSave({ growth: 20 })
-      render(<App />)
+      renderApp()
       const badge = screen.getByText('[KITTEN]')
       fireEvent.keyDown(badge, { key: 'Enter' })
       expect(screen.getByRole('progressbar', { name: 'Growth to YOUNG CAT' })).toBeInTheDocument()
@@ -351,7 +509,7 @@ describe('App', () => {
 
     it('ignores keys other than Enter/Space', () => {
       seedSave({ growth: 20 })
-      render(<App />)
+      renderApp()
       const badge = screen.getByText('[KITTEN]')
       fireEvent.keyDown(badge, { key: 'a' })
       expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
@@ -359,14 +517,14 @@ describe('App', () => {
 
     it('shows progress toward adult while young, relative to the young threshold', () => {
       seedSave({ growth: 80 }) // young, (80-40)/(120-40) = 50% toward adult
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[YOUNG CAT]'))
       expect(screen.getByRole('progressbar', { name: 'Growth to ADULT CAT' })).toHaveAttribute('aria-valuenow', '50')
     })
 
     it('shows a "fully grown" message instead of a bar once adult', () => {
       seedSave({ growth: 120 })
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[ADULT CAT]'))
       expect(screen.getByText('fully grown!')).toBeInTheDocument()
       expect(screen.queryByRole('progressbar', { name: /Growth to/ })).not.toBeInTheDocument()
@@ -376,7 +534,7 @@ describe('App', () => {
   describe('menu', () => {
     it('opens the menu overlay and closes it', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[MENU]'))
       const overlay = screen.getByText('MENU').closest('.menu-panel') as HTMLElement
       fireEvent.click(within(overlay).getByText('[ CLOSE ]'))
@@ -385,7 +543,7 @@ describe('App', () => {
 
     it('disables the menu button while a mini-game is active', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByText('[MENU]')).toBeDisabled()
     })
@@ -394,7 +552,7 @@ describe('App', () => {
   describe('stats window', () => {
     it('opens when the pet name is clicked, showing extended stats', () => {
       seedSave({ growth: 20, totalFeeds: 4 })
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
       expect(screen.getByText("Mochi'S STATS")).toBeInTheDocument()
       expect(screen.getByText('Times fed')).toBeInTheDocument()
@@ -403,7 +561,7 @@ describe('App', () => {
 
     it('closes via the close button', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
       fireEvent.click(screen.getByText('[ CLOSE ]'))
       expect(screen.queryByText("Mochi'S STATS")).not.toBeInTheDocument()
@@ -411,7 +569,7 @@ describe('App', () => {
 
     it('the pet name stays an accessible heading even though it is also clickable', () => {
       seedSave()
-      render(<App />)
+      renderApp()
       expect(screen.getByRole('heading', { name: 'Mochi' })).toBeInTheDocument()
     })
   })

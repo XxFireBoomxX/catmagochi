@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deriveMood, usePet } from './usePet'
-import type { PetStats } from '../types'
+import type { CareEventType, PetStats } from '../types'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const baseStats: PetStats = { fullness: 80, happiness: 80, energy: 80, cleanliness: 80 }
@@ -263,6 +263,28 @@ describe('usePet', () => {
       act(() => result.current.feed())
       expect(result.current.save).toBeNull()
     })
+
+    it('emits a care event with a fresh id on success', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Feeder'))
+      act(() => result.current.feed())
+      expect(onCareEvent).toHaveBeenCalledTimes(1)
+      const [id, type, hits] = onCareEvent.mock.calls[0]
+      expect(typeof id).toBe('string')
+      expect(id.length).toBeGreaterThan(0)
+      expect(type).toBe('feed')
+      expect(hits).toBeUndefined()
+    })
+
+    it('does not emit a care event while sleeping', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Sleepy'))
+      act(() => result.current.toggleSleep())
+      act(() => result.current.feed())
+      expect(onCareEvent).not.toHaveBeenCalled()
+    })
   })
 
   describe('playGame', () => {
@@ -293,6 +315,17 @@ describe('usePet', () => {
       act(() => result.current.playGame(3))
       expect(result.current.save?.growth).toBe(0)
     })
+
+    it('emits a care event carrying the hit count', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Player'))
+      act(() => result.current.playGame(3))
+      expect(onCareEvent).toHaveBeenCalledTimes(1)
+      const [, type, hits] = onCareEvent.mock.calls[0]
+      expect(type).toBe('play')
+      expect(hits).toBe(3)
+    })
   })
 
   describe('clean', () => {
@@ -311,6 +344,15 @@ describe('usePet', () => {
       act(() => result.current.toggleSleep())
       act(() => result.current.clean())
       expect(result.current.save?.growth).toBe(0)
+    })
+
+    it('emits a care event on success', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Cleaner'))
+      act(() => result.current.clean())
+      expect(onCareEvent).toHaveBeenCalledTimes(1)
+      expect(onCareEvent.mock.calls[0][1]).toBe('clean')
     })
   })
 
@@ -395,6 +437,112 @@ describe('usePet', () => {
         applied = result.current.pet()
       })
       expect(applied).toBe(false)
+    })
+
+    it('emits a care event only when the pet actually applies', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Pettable'))
+      act(() => {
+        result.current.pet()
+      })
+      expect(onCareEvent).toHaveBeenCalledTimes(1)
+      expect(onCareEvent.mock.calls[0][1]).toBe('pet')
+
+      // blocked by cooldown -- no second event
+      act(() => {
+        result.current.pet()
+      })
+      expect(onCareEvent).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('applyRemoteEvent', () => {
+    it('applies the same delta a local action would, keyed by care event type', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Remote'))
+      act(() => {
+        result.current.applyRemoteEvent('evt-1', 'feed')
+      })
+      expect(result.current.save?.stats.fullness).toBe(100)
+      expect(result.current.save?.stats.happiness).toBe(85)
+      expect(result.current.save?.growth).toBe(3)
+      expect(result.current.save?.totalFeeds).toBe(1)
+    })
+
+    it('applies a play event using the given hit count', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Remote'))
+      act(() => {
+        result.current.applyRemoteEvent('evt-play', 'play', 3)
+      })
+      expect(result.current.save?.growth).toBe(7)
+      expect(result.current.save?.stats.happiness).toBe(97)
+    })
+
+    it('is idempotent: replaying the same event id is a no-op the second time', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Remote'))
+      act(() => {
+        result.current.applyRemoteEvent('evt-dup', 'clean')
+      })
+      expect(result.current.save?.growth).toBe(2)
+      let secondResult: boolean | undefined
+      act(() => {
+        secondResult = result.current.applyRemoteEvent('evt-dup', 'clean')
+      })
+      expect(secondResult).toBe(false)
+      expect(result.current.save?.growth).toBe(2)
+    })
+
+    it('deduplicates a remote event that echoes back an id this device already emitted locally', () => {
+      const onCareEvent = vi.fn()
+      const { result } = renderHook(() => usePet(onCareEvent))
+      act(() => result.current.createPet('Remote'))
+      act(() => result.current.feed())
+      const emittedId = onCareEvent.mock.calls[0][0] as string
+      expect(result.current.save?.growth).toBe(3)
+
+      let echoApplied: boolean | undefined
+      act(() => {
+        echoApplied = result.current.applyRemoteEvent(emittedId, 'feed')
+      })
+      expect(echoApplied).toBe(false)
+      expect(result.current.save?.growth).toBe(3)
+    })
+
+    it('applies even while sleeping, unlike local actions', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Sleepy'))
+      act(() => result.current.toggleSleep())
+      act(() => {
+        result.current.applyRemoteEvent('evt-asleep', 'pet')
+      })
+      expect(result.current.save?.growth).toBe(1)
+      expect(result.current.save?.totalPets).toBe(1)
+    })
+
+    it('is a no-op when there is no save yet', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => {
+        result.current.applyRemoteEvent('evt-nosave', 'feed')
+      })
+      expect(result.current.save).toBeNull()
+    })
+
+    it('covers every synced care event type', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('AllTypes'))
+      const types: CareEventType[] = ['feed', 'clean', 'pet', 'play']
+      for (const type of types) {
+        act(() => {
+          result.current.applyRemoteEvent(`evt-${type}`, type, type === 'play' ? 1 : undefined)
+        })
+      }
+      expect(result.current.save?.totalFeeds).toBe(1)
+      expect(result.current.save?.totalCleans).toBe(1)
+      expect(result.current.save?.totalPets).toBe(1)
+      expect(result.current.save?.totalPlays).toBe(1)
     })
   })
 
