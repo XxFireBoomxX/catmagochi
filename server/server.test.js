@@ -226,6 +226,123 @@ describe('catmagochi relay server', () => {
     ws.close()
   }
 
+  test('POST /care-event rejects an invalid token', async () => {
+    const res = await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'wrong', id: 'evt-1', type: 'feed' }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  test('POST /care-event rejects a missing id', async () => {
+    const res = await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, type: 'feed' }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('POST /care-event rejects an unrecognized event type', async () => {
+    const res = await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-1', type: 'not-a-real-type' }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('POST /care-event rejects malformed JSON', async () => {
+    const res = await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not json{{',
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('a valid care event is queued, persisted, and broadcast live to a connected client', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=${TOKEN}`)
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve
+      ws.onerror = reject
+    })
+    const received = new Promise((resolve) => {
+      ws.onmessage = (event) => resolve(JSON.parse(event.data))
+    })
+
+    const res = await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-live', type: 'play', hits: 3 }),
+    })
+    assert.equal(res.status, 200)
+
+    const frame = await received
+    assert.equal(frame.type, 'care-event')
+    assert.equal(frame.id, 'evt-live')
+    assert.equal(frame.eventType, 'play')
+    assert.equal(frame.hits, 3)
+
+    const stored = JSON.parse(readFileSync(join(dataDir, 'care-events.json'), 'utf-8'))
+    assert.ok(stored.some((e) => e.id === 'evt-live'))
+
+    ws.send(JSON.stringify({ type: 'ack', id: 'evt-live' }))
+    await new Promise((r) => setTimeout(r, 100))
+    ws.close()
+
+    const afterAck = JSON.parse(readFileSync(join(dataDir, 'care-events.json'), 'utf-8'))
+    assert.ok(!afterAck.some((e) => e.id === 'evt-live'))
+  })
+
+  test('undelivered care events replay to a newly connecting client', async () => {
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-queued', type: 'clean' }),
+    })
+
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=${TOKEN}`)
+    const frame = await new Promise((resolve, reject) => {
+      ws.onmessage = (event) => resolve(JSON.parse(event.data))
+      ws.onerror = reject
+    })
+    assert.equal(frame.id, 'evt-queued')
+    assert.equal(frame.eventType, 'clean')
+
+    ws.send(JSON.stringify({ type: 'ack', id: 'evt-queued' }))
+    await new Promise((r) => setTimeout(r, 100))
+    ws.close()
+  })
+
+  test('a broadcast care event reaches every connected client, not just the sender', async () => {
+    const wsA = new WebSocket(`ws://localhost:${PORT}/ws?token=${TOKEN}`)
+    const wsB = new WebSocket(`ws://localhost:${PORT}/ws?token=${TOKEN}`)
+    await Promise.all([
+      new Promise((resolve, reject) => { wsA.onopen = resolve; wsA.onerror = reject }),
+      new Promise((resolve, reject) => { wsB.onopen = resolve; wsB.onerror = reject }),
+    ])
+
+    const receivedByA = new Promise((resolve) => { wsA.onmessage = (e) => resolve(JSON.parse(e.data)) })
+    const receivedByB = new Promise((resolve) => { wsB.onmessage = (e) => resolve(JSON.parse(e.data)) })
+
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-two-clients', type: 'pet' }),
+    })
+
+    const [frameA, frameB] = await Promise.all([receivedByA, receivedByB])
+    assert.equal(frameA.id, 'evt-two-clients')
+    assert.equal(frameB.id, 'evt-two-clients')
+
+    wsA.send(JSON.stringify({ type: 'ack', id: 'evt-two-clients' }))
+    await new Promise((r) => setTimeout(r, 100))
+    wsA.close()
+    wsB.close()
+  })
+
   const fakeSubscription = {
     endpoint: 'https://push.example.test/fake-endpoint',
     keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' },

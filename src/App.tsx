@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { StartScreen } from './components/StartScreen'
 import { AsciiCat } from './components/AsciiCat'
 import { YarnGame } from './components/YarnGame'
 import { MessageView } from './components/MessageView'
@@ -9,16 +10,26 @@ import { usePet } from './hooks/usePet'
 import { useFlavorText } from './hooks/useFlavorText'
 import { useMessages } from './hooks/useMessages'
 import { useMessageHistory } from './hooks/useMessageHistory'
+import { useCareEvents } from './hooks/useCareEvents'
 import { useNotificationSettings } from './hooks/useNotificationSettings'
 import { usePushSubscription } from './hooks/usePushSubscription'
 import { useAttentionNotifications } from './hooks/useAttentionNotifications'
 import { deriveStage, growthProgress, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
 import { ACTION_FLAVOR } from './data/flavorText'
-import type { ActionCueType, PetStats, RelayMessage, Stage } from './types'
+import type { ActionCueType, CareEventType, PetStats, RelayMessage, Stage } from './types'
 import './App.css'
 
 const ACTION_FLAVOR_CHANCE = 0.25
 const ACTION_FLAVOR_MS = 2500
+
+// Which stat bars visibly pulse for a synced care event, mirroring the
+// deltas applyCareEvent applies in usePet.ts.
+const CARE_EVENT_STATS: Record<CareEventType, (keyof PetStats)[]> = {
+  feed: ['fullness', 'happiness'],
+  clean: ['cleanliness'],
+  pet: ['happiness'],
+  play: ['happiness', 'energy', 'fullness', 'cleanliness'],
+}
 
 function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]
@@ -50,12 +61,22 @@ function NameScreen({ onCreate }: { onCreate: (name: string) => void }) {
 }
 
 function App() {
-  const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage } = usePet()
+  // Bridges applyRemoteEvent (only known once usePet has returned) to
+  // useCareEvents' onEvent (which must be passed in on the same call that
+  // creates the WebSocket connection) without a chicken-and-egg ordering
+  // problem -- see the assignment right before the early return below,
+  // which mirrors the saveRef-updated-every-render pattern in usePet.ts.
+  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType, hits?: number) => void>(() => {})
+  const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage, applyRemoteEvent } = usePet(
+    (id, type, hits) => careEvents.emit(id, type, hits),
+  )
+  const careEvents = useCareEvents((id, type, hits) => handleRemoteCareEventRef.current(id, type, hits))
   const { messages, dismiss } = useMessages()
   const { history, record } = useMessageHistory()
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
+  const [showStart, setShowStart] = useState(true)
   const [pulsed, setPulsed] = useState<Set<keyof PetStats>>(new Set())
   const [gameActive, setGameActive] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -100,6 +121,10 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage])
 
+  if (showStart) {
+    return <StartScreen onDone={() => setShowStart(false)} />
+  }
+
   if (!save) {
     return <NameScreen onCreate={createPet} />
   }
@@ -131,6 +156,18 @@ function App() {
     setActionFlavor(pick(ACTION_FLAVOR[type]))
     clearTimeout(actionFlavorTimer.current)
     actionFlavorTimer.current = setTimeout(() => setActionFlavor(null), ACTION_FLAVOR_MS)
+  }
+
+  // A care event from another device gets the same reactions a local action
+  // gets (stat pulse, cat glyph cue, occasional bonus caption) -- applied
+  // is false for a dedup'd echo of our own action or an already-seen event
+  // replayed after reconnect, which should stay silent.
+  handleRemoteCareEventRef.current = (id, type, hits) => {
+    const applied = applyRemoteEvent(id, type, hits)
+    if (!applied) return
+    for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
+    if (type === 'feed' || type === 'clean') triggerCue(type)
+    if (type !== 'play') maybeShowActionFlavor(type)
   }
 
   const handlePetClick = () => {

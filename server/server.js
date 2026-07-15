@@ -13,8 +13,12 @@ const MESSAGES_FILE = DATA_DIR
 const SUBSCRIPTIONS_FILE = DATA_DIR
   ? new URL(`file://${DATA_DIR}/subscriptions.json`)
   : new URL('./subscriptions.json', import.meta.url)
+const EVENTS_FILE = DATA_DIR
+  ? new URL(`file://${DATA_DIR}/care-events.json`)
+  : new URL('./care-events.json', import.meta.url)
 const MAX_TEXT_LENGTH = 500
 const PING_INTERVAL_MS = 25_000
+const CARE_EVENT_TYPES = new Set(['feed', 'clean', 'pet', 'play'])
 
 if (!RELAY_TOKEN) {
   console.error('RELAY_TOKEN env var is required')
@@ -55,6 +59,23 @@ if (existsSync(SUBSCRIPTIONS_FILE)) {
 
 function persistSubscriptions() {
   writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptions, null, 2))
+}
+
+// Care events (feed/clean/pet/play) for the shared-pet sync -- same
+// queue-and-replay shape as `pending` messages above, kept as a fully
+// separate store since they're a different domain (game-state deltas, not
+// chat notes) even though the transport mechanics are identical.
+let pendingEvents = []
+if (existsSync(EVENTS_FILE)) {
+  try {
+    pendingEvents = JSON.parse(readFileSync(EVENTS_FILE, 'utf-8'))
+  } catch {
+    pendingEvents = []
+  }
+}
+
+function persistEvents() {
+  writeFileSync(EVENTS_FILE, JSON.stringify(pendingEvents, null, 2))
 }
 
 // Sends a push to every subscriber who hasn't opted out of `type`. Prunes
@@ -215,6 +236,45 @@ const server = createServer((req, res) => {
     return
   }
 
+  // Shared-pet care events (feed/clean/pet/play). The client generates `id`
+  // itself (not the server, unlike /send) so it can mark the id as already
+  // applied *before* the broadcast echo comes back over its own WebSocket
+  // connection -- every connected client receives every broadcast,
+  // including the one that just sent it.
+  if (req.method === 'POST' && req.url === '/care-event') {
+    setCors(res)
+    readJsonBody(req).then(
+      ({ token, id, type, hits }) => {
+        if (token !== RELAY_TOKEN) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'invalid token' }))
+          return
+        }
+        if (typeof id !== 'string' || !id || !CARE_EVENT_TYPES.has(type)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'invalid event' }))
+          return
+        }
+        const event = {
+          id,
+          eventType: type,
+          hits: typeof hits === 'number' ? hits : undefined,
+          sentAt: Date.now(),
+        }
+        pendingEvents.push(event)
+        persistEvents()
+        broadcastEvent(event)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+      },
+      () => {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid request' }))
+      },
+    )
+    return
+  }
+
   res.writeHead(200, { 'Content-Type': 'text/plain' })
   res.end('catmagochi relay running')
 })
@@ -223,6 +283,13 @@ const wss = new WebSocketServer({ noServer: true })
 
 function broadcast(message) {
   const frame = JSON.stringify({ type: 'message', ...message })
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) client.send(frame)
+  }
+}
+
+function broadcastEvent(event) {
+  const frame = JSON.stringify({ type: 'care-event', ...event })
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(frame)
   }
@@ -246,13 +313,21 @@ wss.on('connection', (ws) => {
   for (const message of pending) {
     ws.send(JSON.stringify({ type: 'message', ...message }))
   }
+  for (const event of pendingEvents) {
+    ws.send(JSON.stringify({ type: 'care-event', ...event }))
+  }
 
   ws.on('message', (data) => {
     try {
       const parsed = JSON.parse(data.toString())
       if (parsed.type === 'ack' && parsed.id) {
+        const pendingBefore = pending.length
         pending = pending.filter((m) => m.id !== parsed.id)
-        persist()
+        if (pending.length !== pendingBefore) persist()
+
+        const eventsBefore = pendingEvents.length
+        pendingEvents = pendingEvents.filter((e) => e.id !== parsed.id)
+        if (pendingEvents.length !== eventsBefore) persistEvents()
       }
     } catch {
       // ignore malformed frames

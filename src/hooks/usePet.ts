@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Mood, PetSave, PetStats } from '../types'
+import type { CareEventType, Mood, PetSave, PetStats } from '../types'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const TICK_MS = 5_000
@@ -62,6 +62,54 @@ function applyElapsed(stats: PetStats, sleeping: boolean, elapsedMs: number): Pe
   }
 }
 
+// The delta each care action applies -- shared between locally-triggered
+// actions and remote events replayed from another device (see usePet's
+// applyRemoteEvent), so both sides of a sync stay identical.
+function applyCareEvent(save: PetSave, type: CareEventType, hits?: number): PetSave {
+  switch (type) {
+    case 'feed':
+      return {
+        ...save,
+        growth: save.growth + 3,
+        totalFeeds: save.totalFeeds + 1,
+        stats: {
+          ...save.stats,
+          fullness: clamp(save.stats.fullness + 25),
+          happiness: clamp(save.stats.happiness + 5),
+        },
+      }
+    case 'clean':
+      return {
+        ...save,
+        growth: save.growth + 2,
+        totalCleans: save.totalCleans + 1,
+        stats: { ...save.stats, cleanliness: clamp(save.stats.cleanliness + 30) },
+      }
+    case 'pet':
+      return {
+        ...save,
+        growth: save.growth + 1,
+        totalPets: save.totalPets + 1,
+        stats: { ...save.stats, happiness: clamp(save.stats.happiness + 3) },
+      }
+    case 'play': {
+      const h = hits ?? 0
+      return {
+        ...save,
+        growth: save.growth + 1 + 2 * h,
+        totalPlays: save.totalPlays + 1,
+        stats: {
+          ...save.stats,
+          happiness: clamp(save.stats.happiness + 2 + 5 * h),
+          energy: clamp(save.stats.energy - 10),
+          fullness: clamp(save.stats.fullness - 5),
+          cleanliness: clamp(save.stats.cleanliness - 5),
+        },
+      }
+    }
+  }
+}
+
 export function deriveMood(stats: PetStats, sleeping: boolean): Mood {
   if (sleeping) return 'sleeping'
   if (stats.fullness < 25) return 'hungry'
@@ -72,7 +120,9 @@ export function deriveMood(stats: PetStats, sleeping: boolean): Mood {
   return avg > 75 ? 'happy' : 'content'
 }
 
-export function usePet() {
+export type OnCareEvent = (id: string, type: CareEventType, hits?: number) => void
+
+export function usePet(onCareEvent?: OnCareEvent) {
   const [save, setSave] = useState<PetSave | null>(() => {
     const existing = loadSave()
     if (!existing) return null
@@ -85,6 +135,16 @@ export function usePet() {
   })
   const saveRef = useRef(save)
   saveRef.current = save
+  // Care events already applied to this save -- populated both when this
+  // device emits its own event and when it replays one from another
+  // device, so a remote echo of our own action (or a redelivered-after-
+  // reconnect event we already acked) is never double-applied. In-memory
+  // only: it resets on reload, which leaves a narrow, accepted gap where
+  // an action taken right before the app closes -- before its ack reaches
+  // the relay -- could be re-applied once on reconnect. Given the low
+  // stakes (a personal pet, not a ledger) and how rare that timing window
+  // is, that's judged not worth the complexity of persisting/pruning this.
+  const appliedEventIds = useRef(new Set<string>())
 
   useEffect(() => {
     if (save) localStorage.setItem(SAVE_KEY, JSON.stringify(save))
@@ -110,51 +170,38 @@ export function usePet() {
     setSave(defaultSave(name.trim() || 'Cat'))
   }, [])
 
-  const feed = useCallback(() => {
-    setSave((current) => {
-      if (!current || current.sleeping) return current
-      return {
-        ...current,
-        growth: current.growth + 3,
-        totalFeeds: current.totalFeeds + 1,
-        stats: {
-          ...current.stats,
-          fullness: clamp(current.stats.fullness + 25),
-          happiness: clamp(current.stats.happiness + 5),
-        },
-      }
-    })
-  }, [])
+  // Generates the id a synced action is tracked/broadcast under, marks it
+  // applied (so a later echo of it back from the relay is a no-op), and
+  // notifies the caller so it can hand the event off to the relay.
+  const emitLocalEvent = useCallback(
+    (type: CareEventType, hits?: number) => {
+      const id = crypto.randomUUID()
+      appliedEventIds.current.add(id)
+      onCareEvent?.(id, type, hits)
+    },
+    [onCareEvent],
+  )
 
-  const playGame = useCallback((hits: number) => {
-    setSave((current) => {
-      if (!current || current.sleeping) return current
-      return {
-        ...current,
-        growth: current.growth + 1 + 2 * hits,
-        totalPlays: current.totalPlays + 1,
-        stats: {
-          ...current.stats,
-          happiness: clamp(current.stats.happiness + 2 + 5 * hits),
-          energy: clamp(current.stats.energy - 10),
-          fullness: clamp(current.stats.fullness - 5),
-          cleanliness: clamp(current.stats.cleanliness - 5),
-        },
-      }
-    })
-  }, [])
+  const feed = useCallback(() => {
+    if (!saveRef.current || saveRef.current.sleeping) return
+    setSave((current) => (current ? applyCareEvent(current, 'feed') : current))
+    emitLocalEvent('feed')
+  }, [emitLocalEvent])
+
+  const playGame = useCallback(
+    (hits: number) => {
+      if (!saveRef.current || saveRef.current.sleeping) return
+      setSave((current) => (current ? applyCareEvent(current, 'play', hits) : current))
+      emitLocalEvent('play', hits)
+    },
+    [emitLocalEvent],
+  )
 
   const clean = useCallback(() => {
-    setSave((current) => {
-      if (!current || current.sleeping) return current
-      return {
-        ...current,
-        growth: current.growth + 2,
-        totalCleans: current.totalCleans + 1,
-        stats: { ...current.stats, cleanliness: clamp(current.stats.cleanliness + 30) },
-      }
-    })
-  }, [])
+    if (!saveRef.current || saveRef.current.sleeping) return
+    setSave((current) => (current ? applyCareEvent(current, 'clean') : current))
+    emitLocalEvent('clean')
+  }, [emitLocalEvent])
 
   const toggleSleep = useCallback(() => {
     setSave((current) => (current ? { ...current, sleeping: !current.sleeping } : current))
@@ -168,9 +215,19 @@ export function usePet() {
     const now = Date.now()
     if (now - lastPetAt.current < PET_COOLDOWN_MS) return false
     lastPetAt.current = now
-    setSave((c) =>
-      c ? { ...c, growth: c.growth + 1, totalPets: c.totalPets + 1, stats: { ...c.stats, happiness: clamp(c.stats.happiness + 3) } } : c,
-    )
+    setSave((c) => (c ? applyCareEvent(c, 'pet') : c))
+    emitLocalEvent('pet')
+    return true
+  }, [emitLocalEvent])
+
+  // Applies a care event that originated on another device. Deliberately
+  // skips the `sleeping` gate local actions have -- sleeping is a
+  // per-device UI toggle, not synced state, so it shouldn't block a
+  // remote party's actions from landing here.
+  const applyRemoteEvent = useCallback((id: string, type: CareEventType, hits?: number) => {
+    if (appliedEventIds.current.has(id)) return false
+    appliedEventIds.current.add(id)
+    setSave((current) => (current ? applyCareEvent(current, type, hits) : current))
     return true
   }, [])
 
@@ -182,5 +239,5 @@ export function usePet() {
 
   const mood = save ? deriveMood(save.stats, save.sleeping) : 'content'
 
-  return { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage }
+  return { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage, applyRemoteEvent }
 }
