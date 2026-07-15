@@ -25,6 +25,11 @@ function seedSave(overrides: Partial<PetSave> = {}) {
     sleeping: false,
     lastUpdate: NOW,
     growth: 0,
+    adoptedAt: NOW,
+    totalFeeds: 0,
+    totalPlays: 0,
+    totalCleans: 0,
+    totalPets: 0,
     ...overrides,
   }
   localStorage.setItem(SAVE_KEY, JSON.stringify(save))
@@ -74,6 +79,30 @@ describe('App', () => {
       seedSave()
       render(<App />)
       expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument()
+    })
+
+    it('pops the mood caption up at a randomized, bounded position instead of a fixed spot', () => {
+      seedSave()
+      render(<App />)
+      const caption = screen.getByText('Mochi is happy (mocked)')
+      expect(caption).toHaveAttribute('aria-live', 'polite')
+      const top = Number.parseFloat(caption.style.top)
+      const left = Number.parseFloat(caption.style.left)
+      expect(top).toBeGreaterThanOrEqual(10)
+      expect(top).toBeLessThanOrEqual(45)
+      expect(left).toBeGreaterThanOrEqual(15)
+      expect(left).toBeLessThanOrEqual(75)
+    })
+
+    it('replaces the popped caption (new DOM node) whenever the underlying text changes', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSave()
+      render(<App />)
+      const first = screen.getByText('Mochi is happy (mocked)')
+      fireEvent.click(screen.getByText('[FEED]')) // 0 < ACTION_FLAVOR_CHANCE, bonus line triggers
+      expect(screen.queryByText('Mochi is happy (mocked)')).not.toBeInTheDocument()
+      const second = screen.getByText(/smacks its lips/)
+      expect(second).not.toBe(first)
     })
 
     it('renders the stage badge and all four stat bars from the save', () => {
@@ -129,6 +158,70 @@ describe('App', () => {
       render(<App />)
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(getSave().stats.happiness).toBe(83)
+    })
+  })
+
+  describe('action juice (cues + bonus flavor)', () => {
+    it('shows a feed-specific glyph on the cat after feeding', () => {
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByText('[FEED]'))
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('nom nom')
+    })
+
+    it('shows a clean-specific glyph on the cat after cleaning', () => {
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByText('[CLEAN]'))
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('*scrub*')
+    })
+
+    it('shows sleep/wake-specific glyphs on toggling sleep', () => {
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByText('[SLEEP]'))
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('zzz')
+      fireEvent.click(screen.getByText('[WAKE]'))
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('o.o')
+    })
+
+    it('occasionally replaces the mood caption with a bonus reaction line after an action, then reverts', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByText('[FEED]'))
+      expect(screen.getByText(/smacks its lips/)).toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(2_500)
+      })
+      expect(screen.queryByText(/smacks its lips/)).not.toBeInTheDocument()
+      expect(screen.getByText('Mochi is happy (mocked)')).toBeInTheDocument()
+    })
+
+    it('does not show a bonus line when the random chance misses', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.9)
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByText('[FEED]'))
+      expect(screen.getByText('Mochi is happy (mocked)')).toBeInTheDocument()
+    })
+
+    it('can also show a bonus line after a successful pet', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
+      expect(screen.getByText(/leans into your hand/)).toBeInTheDocument()
+    })
+
+    it('does not show a bonus line for a pet that fails its cooldown', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSave()
+      render(<App />)
+      const catButton = screen.getByRole('button', { name: 'Pet Mochi' })
+      fireEvent.click(catButton) // applies, growth +1
+      fireEvent.click(catButton) // still on cooldown, no-op
+      expect(getSave().growth).toBe(1)
     })
   })
 
@@ -226,6 +319,60 @@ describe('App', () => {
     })
   })
 
+  describe('growth progress toggle', () => {
+    it('is hidden until the stage badge is tapped', () => {
+      seedSave({ growth: 20 })
+      render(<App />)
+      expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
+    })
+
+    it('shows progress toward the next stage when tapped, and hides again on a second tap', () => {
+      seedSave({ growth: 20 }) // kitten, 20/40 = 50% toward young
+      render(<App />)
+      const badge = screen.getByText('[KITTEN]')
+      fireEvent.click(badge)
+      expect(screen.getByRole('progressbar', { name: 'Growth to YOUNG CAT' })).toHaveAttribute('aria-valuenow', '50')
+      expect(badge).toHaveAttribute('aria-expanded', 'true')
+
+      fireEvent.click(badge)
+      expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
+      expect(badge).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('toggles via keyboard (Enter/Space) as well as click', () => {
+      seedSave({ growth: 20 })
+      render(<App />)
+      const badge = screen.getByText('[KITTEN]')
+      fireEvent.keyDown(badge, { key: 'Enter' })
+      expect(screen.getByRole('progressbar', { name: 'Growth to YOUNG CAT' })).toBeInTheDocument()
+      fireEvent.keyDown(badge, { key: ' ' })
+      expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
+    })
+
+    it('ignores keys other than Enter/Space', () => {
+      seedSave({ growth: 20 })
+      render(<App />)
+      const badge = screen.getByText('[KITTEN]')
+      fireEvent.keyDown(badge, { key: 'a' })
+      expect(screen.queryByText(/Growth to/)).not.toBeInTheDocument()
+    })
+
+    it('shows progress toward adult while young, relative to the young threshold', () => {
+      seedSave({ growth: 80 }) // young, (80-40)/(120-40) = 50% toward adult
+      render(<App />)
+      fireEvent.click(screen.getByText('[YOUNG CAT]'))
+      expect(screen.getByRole('progressbar', { name: 'Growth to ADULT CAT' })).toHaveAttribute('aria-valuenow', '50')
+    })
+
+    it('shows a "fully grown" message instead of a bar once adult', () => {
+      seedSave({ growth: 120 })
+      render(<App />)
+      fireEvent.click(screen.getByText('[ADULT CAT]'))
+      expect(screen.getByText('fully grown!')).toBeInTheDocument()
+      expect(screen.queryByRole('progressbar', { name: /Growth to/ })).not.toBeInTheDocument()
+    })
+  })
+
   describe('menu', () => {
     it('opens the menu overlay and closes it', () => {
       seedSave()
@@ -241,6 +388,31 @@ describe('App', () => {
       render(<App />)
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByText('[MENU]')).toBeDisabled()
+    })
+  })
+
+  describe('stats window', () => {
+    it('opens when the pet name is clicked, showing extended stats', () => {
+      seedSave({ growth: 20, totalFeeds: 4 })
+      render(<App />)
+      fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
+      expect(screen.getByText("Mochi'S STATS")).toBeInTheDocument()
+      expect(screen.getByText('Times fed')).toBeInTheDocument()
+      expect(screen.getByText('4')).toBeInTheDocument()
+    })
+
+    it('closes via the close button', () => {
+      seedSave()
+      render(<App />)
+      fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
+      fireEvent.click(screen.getByText('[ CLOSE ]'))
+      expect(screen.queryByText("Mochi'S STATS")).not.toBeInTheDocument()
+    })
+
+    it('the pet name stays an accessible heading even though it is also clickable', () => {
+      seedSave()
+      render(<App />)
+      expect(screen.getByRole('heading', { name: 'Mochi' })).toBeInTheDocument()
     })
   })
 })

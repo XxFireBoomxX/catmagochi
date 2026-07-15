@@ -13,14 +13,20 @@
   font-size: 1.15rem;
   font-weight: 700;
   color: var(--primary);
-  text-shadow: 0 0 8px var(--glow);
-  animation: float-up 2.2s ease-in-out infinite;
+  text-shadow:
+    -1px -1px 0 var(--bg),
+    1px -1px 0 var(--bg),
+    -1px 1px 0 var(--bg),
+    1px 1px 0 var(--bg),
+    0 0 8px var(--glow);
+  animation: float-up 1.8s ease-out forwards;
   pointer-events: none;
 }
 
 @keyframes float-up {
   0% { transform: translateY(0); opacity: 0; }
-  30% { opacity: 1; }
+  20% { opacity: 1; }
+  70% { opacity: 1; }
   100% { transform: translateY(-28px); opacity: 0; }
 }
 

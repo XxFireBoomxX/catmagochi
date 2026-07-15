@@ -3,14 +3,26 @@ import { AsciiCat } from './components/AsciiCat'
 import { YarnGame } from './components/YarnGame'
 import { MessageView } from './components/MessageView'
 import { Menu } from './components/Menu'
+import { StatsWindow } from './components/StatsWindow'
 import { StatBar } from './components/StatBar'
 import { usePet } from './hooks/usePet'
 import { useFlavorText } from './hooks/useFlavorText'
 import { useMessages } from './hooks/useMessages'
 import { useMessageHistory } from './hooks/useMessageHistory'
-import { deriveStage, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
-import type { PetStats, RelayMessage, Stage } from './types'
+import { useNotificationSettings } from './hooks/useNotificationSettings'
+import { usePushSubscription } from './hooks/usePushSubscription'
+import { useAttentionNotifications } from './hooks/useAttentionNotifications'
+import { deriveStage, growthProgress, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
+import { ACTION_FLAVOR } from './data/flavorText'
+import type { ActionCueType, PetStats, RelayMessage, Stage } from './types'
 import './App.css'
+
+const ACTION_FLAVOR_CHANCE = 0.25
+const ACTION_FLAVOR_MS = 2500
+
+function pick<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)]
+}
 
 function NameScreen({ onCreate }: { onCreate: (name: string) => void }) {
   const [name, setName] = useState('')
@@ -41,13 +53,40 @@ function App() {
   const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage } = usePet()
   const { messages, dismiss } = useMessages()
   const { history, record } = useMessageHistory()
+  const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
+  const { status: pushStatus } = usePushSubscription(notificationSettings)
+  useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
   const [pulsed, setPulsed] = useState<Set<keyof PetStats>>(new Set())
   const [gameActive, setGameActive] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
+  const [showGrowthProgress, setShowGrowthProgress] = useState(false)
   const [growBanner, setGrowBanner] = useState<string | null>(null)
+  const [actionCue, setActionCue] = useState<{ type: ActionCueType } | null>(null)
+  const [actionFlavor, setActionFlavor] = useState<string | null>(null)
+  const [captionPop, setCaptionPop] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
+  const actionFlavorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const captionKey = useRef(0)
   const flavorText = useFlavorText(mood)
   const prevStage = useRef<Stage | null>(null)
   const stage = save ? deriveStage(save.growth) : null
+  const captionText = save ? `${save.name} ${actionFlavor ?? flavorText}` : null
+
+  useEffect(() => () => clearTimeout(actionFlavorTimer.current), [])
+
+  // Every time the caption text actually changes (mood swap, idle flavor
+  // line, or a post-action bonus line), pop it up at a fresh random spot
+  // instead of a fixed always-on status line.
+  useEffect(() => {
+    if (!captionText) return
+    captionKey.current += 1
+    setCaptionPop({
+      text: captionText,
+      top: 10 + Math.random() * 35,
+      left: 15 + Math.random() * 60,
+      key: captionKey.current,
+    })
+  }, [captionText])
 
   useEffect(() => {
     if (!stage) return
@@ -66,6 +105,7 @@ function App() {
   }
 
   const { stats, sleeping } = save
+  const progress = growthProgress(save.growth)
 
   const pulse = (stat: keyof PetStats) => {
     setPulsed((current) => new Set(current).add(stat))
@@ -76,6 +116,27 @@ function App() {
         return next
       })
     }, 500)
+  }
+
+  const triggerCue = (type: ActionCueType) => {
+    // A fresh object every call, so pressing the same action type twice in a
+    // row still re-fires AsciiCat's effect (unlike a bare string/primitive,
+    // which React treats as "no change" via Object.is on repeat identical
+    // values).
+    setActionCue({ type })
+  }
+
+  const maybeShowActionFlavor = (type: keyof typeof ACTION_FLAVOR) => {
+    if (Math.random() >= ACTION_FLAVOR_CHANCE) return
+    setActionFlavor(pick(ACTION_FLAVOR[type]))
+    clearTimeout(actionFlavorTimer.current)
+    actionFlavorTimer.current = setTimeout(() => setActionFlavor(null), ACTION_FLAVOR_MS)
+  }
+
+  const handlePetClick = () => {
+    const applied = pet()
+    if (applied) maybeShowActionFlavor('pet')
+    return applied
   }
 
   const handleGameComplete = (hits: number) => {
@@ -102,10 +163,45 @@ function App() {
       <button className="menu-button" onClick={() => setMenuOpen(true)} disabled={gameActive}>[MENU]</button>
 
       <header>
-        <h1>{save.name}</h1>
-        <p className="mood-label">{save.name} {flavorText}</p>
-        <p className="stage-label">[{STAGE_LABEL[stage ?? 'kitten']}]</p>
+        <h1>
+          <button className="name-button" onClick={() => setStatsOpen(true)}>{save.name}</button>
+        </h1>
+        <p
+          className="stage-label"
+          role="button"
+          tabIndex={0}
+          aria-expanded={showGrowthProgress}
+          onClick={() => setShowGrowthProgress((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setShowGrowthProgress((v) => !v)
+            }
+          }}
+        >
+          [{STAGE_LABEL[stage ?? 'kitten']}]
+        </p>
+        {showGrowthProgress && (
+          <div className="growth-progress">
+            {progress.nextStage ? (
+              <StatBar code="GROW" label={`Growth to ${STAGE_LABEL[progress.nextStage]}`} value={progress.percent} />
+            ) : (
+              <p className="growth-progress-maxed">fully grown!</p>
+            )}
+          </div>
+        )}
       </header>
+
+      {captionPop && (
+        <div
+          key={captionPop.key}
+          className="floating-caption"
+          style={{ top: `${captionPop.top}%`, left: `${captionPop.left}%` }}
+          aria-live="polite"
+        >
+          {captionPop.text}
+        </div>
+      )}
 
       {growBanner && <div className="grow-banner">{growBanner}</div>}
 
@@ -114,7 +210,7 @@ function App() {
       ) : messages.length > 0 ? (
         <MessageView message={messages[0]} onDismiss={() => handleDismissMessage(messages[0])} />
       ) : (
-        <AsciiCat mood={mood} name={save.name} stage={stage ?? 'kitten'} onPet={pet} />
+        <AsciiCat mood={mood} name={save.name} stage={stage ?? 'kitten'} onPet={handlePetClick} actionCue={actionCue} />
       )}
 
       <div className="stats">
@@ -125,15 +221,33 @@ function App() {
       </div>
 
       <div className="actions">
-        <button onClick={() => { feed(); pulse('fullness') }} disabled={actionsDisabled}>[FEED]</button>
+        <button onClick={() => { feed(); pulse('fullness'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
         <button onClick={() => setGameActive(true)} disabled={actionsDisabled}>[PLAY]</button>
-        <button onClick={() => { clean(); pulse('cleanliness') }} disabled={actionsDisabled}>[CLEAN]</button>
-        <button onClick={toggleSleep} disabled={gameActive || messages.length > 0} className={sleeping ? 'active' : ''}>
+        <button onClick={() => { clean(); pulse('cleanliness'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
+        <button
+          onClick={() => {
+            const cue: ActionCueType = sleeping ? 'wake' : 'sleep'
+            toggleSleep()
+            triggerCue(cue)
+            maybeShowActionFlavor(cue)
+          }}
+          disabled={gameActive || messages.length > 0}
+          className={sleeping ? 'active' : ''}
+        >
           {sleeping ? '[WAKE]' : '[SLEEP]'}
         </button>
       </div>
 
-      <Menu open={menuOpen} history={history} onClose={() => setMenuOpen(false)} />
+      <Menu
+        open={menuOpen}
+        history={history}
+        onClose={() => setMenuOpen(false)}
+        notificationSettings={notificationSettings}
+        onUpdateNotificationSettings={updateNotificationSettings}
+        pushStatus={pushStatus}
+      />
+
+      <StatsWindow open={statsOpen} save={save} mood={mood} stage={stage ?? 'kitten'} onClose={() => setStatsOpen(false)} />
     </div>
   )
 }

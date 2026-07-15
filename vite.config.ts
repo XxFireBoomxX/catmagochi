@@ -23,6 +23,7 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/main.tsx',
+        'src/sw.ts',
         'src/vite-env.d.ts',
         'src/test/**',
         '**/*.d.ts',
@@ -44,6 +45,11 @@ export default defineConfig({
       // own bundle-swapping, silently serving stale precached assets over
       // whatever OTA bundle is actually supposed to be active.
       injectRegister: false,
+      // injectManifest (not generateSW) because push notifications need a
+      // custom `push`/`notificationclick` handler — see src/sw.ts.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Catmagochi',

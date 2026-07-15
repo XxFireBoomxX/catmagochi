@@ -72,6 +72,18 @@ describe('usePet', () => {
     })
   })
 
+  it('starts a new pet with adoptedAt set to now and all action counters at zero', () => {
+    const { result } = renderHook(() => usePet())
+    act(() => result.current.createPet('Whiskers'))
+    expect(result.current.save).toMatchObject({
+      adoptedAt: Date.now(),
+      totalFeeds: 0,
+      totalPlays: 0,
+      totalCleans: 0,
+      totalPets: 0,
+    })
+  })
+
   it('falls back to "Cat" when the given name is blank', () => {
     const { result } = renderHook(() => usePet())
     act(() => result.current.createPet('   '))
@@ -114,6 +126,27 @@ describe('usePet', () => {
     )
     const { result } = renderHook(() => usePet())
     expect(result.current.save?.growth).toBe(0)
+  })
+
+  it('merges defaults for adoptedAt/counters on saves from before those fields existed', () => {
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({
+        name: 'Old',
+        stats: baseStats,
+        sleeping: false,
+        lastUpdate: Date.now(),
+        growth: 10,
+      }),
+    )
+    const { result } = renderHook(() => usePet())
+    expect(result.current.save).toMatchObject({
+      adoptedAt: Date.now(),
+      totalFeeds: 0,
+      totalPlays: 0,
+      totalCleans: 0,
+      totalPets: 0,
+    })
   })
 
   it('ignores a corrupt save and starts fresh', () => {
@@ -205,6 +238,7 @@ describe('usePet', () => {
       expect(result.current.save?.stats.fullness).toBe(100)
       expect(result.current.save?.stats.happiness).toBe(85)
       expect(result.current.save?.growth).toBe(3)
+      expect(result.current.save?.totalFeeds).toBe(1)
     })
 
     it('clamps fullness at 100', () => {
@@ -241,6 +275,7 @@ describe('usePet', () => {
       expect(result.current.save?.stats.fullness).toBe(75)
       expect(result.current.save?.stats.cleanliness).toBe(75)
       expect(result.current.save?.growth).toBe(7) // 1 + 2*3
+      expect(result.current.save?.totalPlays).toBe(1)
     })
 
     it('still applies a minimum growth/happiness bump on zero hits', () => {
@@ -267,6 +302,7 @@ describe('usePet', () => {
       act(() => result.current.clean())
       expect(result.current.save?.stats.cleanliness).toBe(100)
       expect(result.current.save?.growth).toBe(2)
+      expect(result.current.save?.totalCleans).toBe(1)
     })
 
     it('does nothing while sleeping', () => {
@@ -307,6 +343,7 @@ describe('usePet', () => {
       expect(applied).toBe(true)
       expect(result.current.save?.stats.happiness).toBe(83)
       expect(result.current.save?.growth).toBe(1)
+      expect(result.current.save?.totalPets).toBe(1)
     })
 
     it('is cooldown-gated and returns false when petted again too soon', () => {
