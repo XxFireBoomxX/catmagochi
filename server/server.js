@@ -19,6 +19,7 @@ const EVENTS_FILE = DATA_DIR
 const MAX_TEXT_LENGTH = 500
 const PING_INTERVAL_MS = 25_000
 const CARE_EVENT_TYPES = new Set(['feed', 'clean', 'pet', 'play'])
+const MESSAGE_KINDS = new Set(['nudge'])
 
 if (!RELAY_TOKEN) {
   console.error('RELAY_TOKEN env var is required')
@@ -135,7 +136,7 @@ const server = createServer((req, res) => {
     req.on('end', () => {
       setCors(res)
       try {
-        const { token, text } = JSON.parse(body)
+        const { token, text, kind } = JSON.parse(body)
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -147,7 +148,12 @@ const server = createServer((req, res) => {
           res.end(JSON.stringify({ error: 'text is required' }))
           return
         }
-        const message = { id: randomUUID(), text: trimmed, sentAt: Date.now() }
+        const message = {
+          id: randomUUID(),
+          text: trimmed,
+          sentAt: Date.now(),
+          kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
+        }
         pending.push(message)
         persist()
         broadcast(message)
@@ -244,7 +250,7 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/care-event') {
     setCors(res)
     readJsonBody(req).then(
-      ({ token, id, type, hits }) => {
+      ({ token, id, type }) => {
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -258,7 +264,6 @@ const server = createServer((req, res) => {
         const event = {
           id,
           eventType: type,
-          hits: typeof hits === 'number' ? hits : undefined,
           sentAt: Date.now(),
         }
         pendingEvents.push(event)

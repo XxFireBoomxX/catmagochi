@@ -17,7 +17,6 @@ const CARE_EVENT_TYPES = new Set<CareEventType>(['feed', 'clean', 'pet', 'play']
 interface OutboxEntry {
   id: string
   type: CareEventType
-  hits?: number
 }
 
 function loadOutbox(): OutboxEntry[] {
@@ -33,7 +32,7 @@ function saveOutbox(entries: OutboxEntry[]) {
   localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
 }
 
-export type CareEventHandler = (id: string, type: CareEventType, hits?: number) => void
+export type CareEventHandler = (id: string, type: CareEventType) => void
 
 // Mirrors useMessages' reconnect/backoff shape, but for the care-event sync
 // used by the shared-pet feature -- deliberately a separate WebSocket
@@ -71,7 +70,7 @@ export function useCareEvents(onEvent: CareEventHandler) {
           const res = await fetch(`${HTTP_RELAY_URL}/care-event`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: RELAY_TOKEN, id: next.id, type: next.type, hits: next.hits }),
+            body: JSON.stringify({ token: RELAY_TOKEN, id: next.id, type: next.type }),
           })
           if (!res.ok) break
           outbox.current = outbox.current.slice(1)
@@ -104,7 +103,7 @@ export function useCareEvents(onEvent: CareEventHandler) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'care-event' && CARE_EVENT_TYPES.has(data.eventType)) {
-            onEventRef.current(data.id, data.eventType, data.hits)
+            onEventRef.current(data.id, data.eventType)
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ack', id: data.id }))
             }
@@ -134,9 +133,9 @@ export function useCareEvents(onEvent: CareEventHandler) {
   }, [flush])
 
   const emit = useCallback(
-    (id: string, type: CareEventType, hits?: number) => {
+    (id: string, type: CareEventType) => {
       if (!HTTP_RELAY_URL || !RELAY_TOKEN) return
-      outbox.current = [...outbox.current, { id, type, hits }]
+      outbox.current = [...outbox.current, { id, type }]
       saveOutbox(outbox.current)
       flush()
     },

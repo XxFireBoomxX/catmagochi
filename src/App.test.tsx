@@ -11,8 +11,9 @@ let mockMessages: RelayMessage[] = []
 const mockDismiss = vi.fn((id: string) => {
   mockMessages = mockMessages.filter((m) => m.id !== id)
 })
+const mockSend = vi.fn()
 vi.mock('./hooks/useMessages', () => ({
-  useMessages: () => ({ messages: mockMessages, dismiss: mockDismiss }),
+  useMessages: () => ({ messages: mockMessages, dismiss: mockDismiss, send: mockSend }),
 }))
 
 vi.mock('./hooks/useFlavorText', () => ({
@@ -25,9 +26,9 @@ vi.mock('./hooks/useFlavorText', () => ({
 // Capturing onEvent lets tests simulate an event arriving from another
 // device by just calling it directly, without a real WebSocket.
 const mockEmit = vi.fn()
-let capturedOnCareEvent: ((id: string, type: CareEventType, hits?: number) => void) | null = null
+let capturedOnCareEvent: ((id: string, type: CareEventType) => void) | null = null
 vi.mock('./hooks/useCareEvents', () => ({
-  useCareEvents: (onEvent: (id: string, type: CareEventType, hits?: number) => void) => {
+  useCareEvents: (onEvent: (id: string, type: CareEventType) => void) => {
     capturedOnCareEvent = onEvent
     return { emit: mockEmit }
   },
@@ -72,6 +73,7 @@ describe('App', () => {
     vi.setSystemTime(NOW)
     mockMessages = []
     mockDismiss.mockClear()
+    mockSend.mockClear()
     mockEmit.mockClear()
     capturedOnCareEvent = null
   })
@@ -279,38 +281,39 @@ describe('App', () => {
     })
   })
 
-  describe('mini-game panel swap', () => {
-    it('replaces the cat with the yarn game while playing, and disables other actions', () => {
+  describe('play / nudge picker', () => {
+    it('opens the nudge picker in place of the cat, and disables other actions', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByRole('button', { name: 'Catch the yarn' })).toBeInTheDocument()
+      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
       expect(screen.getByText('[FEED]')).toBeDisabled()
       expect(screen.getByText('[CLEAN]')).toBeDisabled()
       expect(screen.getByText('[PLAY]')).toBeDisabled()
     })
 
-    it('applies playGame stats and restores the cat panel once the game completes', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0)
+    it('picking a nudge applies the play reward, sends it, and restores the cat panel', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      for (let i = 0; i < 3; i++) {
-        act(() => {
-          vi.advanceTimersByTime(500)
-        })
-        fireEvent.click(screen.getByRole('button', { name: 'Catch the yarn' }))
-        act(() => {
-          vi.advanceTimersByTime(600)
-        })
-      }
-      act(() => {
-        vi.advanceTimersByTime(1_600) // SUMMARY_MS -> onComplete(3)
-      })
-      expect(getSave().growth).toBe(7) // 1 + 2*3
+      fireEvent.click(screen.getByText('Miss you'))
+      expect(getSave().stats.happiness).toBe(90)
+      expect(getSave().growth).toBe(3)
+      expect(getSave().totalPlays).toBe(1)
+      expect(mockSend).toHaveBeenCalledWith('Miss you', 'nudge')
       expect(screen.getByRole('button', { name: 'Pet Mochi' })).toBeInTheDocument()
       expect(screen.getByText('[FEED]')).not.toBeDisabled()
+    })
+
+    it('cancel closes the picker without applying anything or sending', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      fireEvent.click(screen.getByText('[ CANCEL ]'))
+      expect(getSave().growth).toBe(0)
+      expect(mockSend).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Pet Mochi' })).toBeInTheDocument()
     })
   })
 
@@ -324,20 +327,21 @@ describe('App', () => {
       expect(screen.getByText('[FEED]')).toBeDisabled()
     })
 
-    it('does not let an incoming message interrupt an in-progress mini-game', () => {
+    it('does not let an incoming message interrupt an open nudge picker', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByRole('button', { name: 'Catch the yarn' })).toBeInTheDocument()
+      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
 
-      // Queue a message mid-game and force a re-render via usePet's own tick
-      // (the mocked useMessages hook only re-reads this on the next render).
+      // Queue a message while the picker is open and force a re-render via
+      // usePet's own tick (the mocked useMessages hook only re-reads this on
+      // the next render).
       mockMessages = [{ id: 'm1', text: 'hi from home', sentAt: NOW }]
       act(() => {
-        vi.advanceTimersByTime(5_000) // usePet's TICK_MS; game completion takes far longer
+        vi.advanceTimersByTime(5_000) // usePet's TICK_MS
       })
 
-      expect(screen.getByRole('button', { name: 'Catch the yarn' })).toBeInTheDocument()
+      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
       expect(screen.queryByText('hi from home')).not.toBeInTheDocument()
     })
 
@@ -351,6 +355,17 @@ describe('App', () => {
       const historyRaw = localStorage.getItem('catmagochi-message-history-v1')
       expect(JSON.parse(historyRaw!)).toEqual([{ id: 'm1', text: 'hi from home', sentAt: NOW }])
     })
+
+    it('dismissing a nudge-kind message skips the generic happiness bonus (already rewarded via its care event)', () => {
+      seedSave()
+      mockMessages = [{ id: 'm1', text: 'Thinking of you', sentAt: NOW, kind: 'nudge' }]
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss message' }))
+      expect(mockDismiss).toHaveBeenCalledWith('m1')
+      expect(getSave().stats.happiness).toBe(80)
+      const historyRaw = localStorage.getItem('catmagochi-message-history-v1')
+      expect(JSON.parse(historyRaw!)).toEqual([{ id: 'm1', text: 'Thinking of you', sentAt: NOW, kind: 'nudge' }])
+    })
   })
 
   describe('shared-pet sync', () => {
@@ -359,10 +374,9 @@ describe('App', () => {
       renderApp()
       fireEvent.click(screen.getByText('[FEED]'))
       expect(mockEmit).toHaveBeenCalledTimes(1)
-      const [id, type, hits] = mockEmit.mock.calls[0]
+      const [id, type] = mockEmit.mock.calls[0]
       expect(typeof id).toBe('string')
       expect(type).toBe('feed')
-      expect(hits).toBeUndefined()
     })
 
     it('emits a care event when cleaning', () => {
@@ -381,26 +395,13 @@ describe('App', () => {
       expect(mockEmit.mock.calls[0][1]).toBe('pet')
     })
 
-    it('emits a care event with the hit count when a mini-game completes', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0)
+    it('emits a care event when a nudge is picked', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      for (let i = 0; i < 3; i++) {
-        act(() => {
-          vi.advanceTimersByTime(500)
-        })
-        fireEvent.click(screen.getByRole('button', { name: 'Catch the yarn' }))
-        act(() => {
-          vi.advanceTimersByTime(600)
-        })
-      }
-      act(() => {
-        vi.advanceTimersByTime(1_600)
-      })
+      fireEvent.click(screen.getByText('Thinking of you'))
       expect(mockEmit).toHaveBeenCalledTimes(1)
       expect(mockEmit.mock.calls[0][1]).toBe('play')
-      expect(mockEmit.mock.calls[0][2]).toBe(3)
     })
 
     it('applies an incoming remote care event to the save and pulses the affected stat', () => {
@@ -434,6 +435,17 @@ describe('App', () => {
       expect(getSave().totalPets).toBe(1)
       const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
       expect(fill).toHaveClass('pulsing')
+    })
+
+    it('a remote play (nudge) event pulses stats and shows its own glyph cue', () => {
+      seedSave()
+      renderApp()
+      act(() => {
+        capturedOnCareEvent?.('remote-1', 'play')
+      })
+      expect(getSave().stats.happiness).toBe(90)
+      expect(getSave().totalPlays).toBe(1)
+      expect(document.querySelector('.cat-effect')?.textContent).toBe('*purr*')
     })
 
     it('does not double-apply a remote event that echoes an id this device already emitted', () => {

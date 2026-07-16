@@ -18,6 +18,7 @@ const ACTION_EFFECT: Record<ActionCueType, string> = {
   clean: '*scrub*',
   sleep: 'zzz',
   wake: 'o.o',
+  play: '*purr*',
 }
 
 const BLINK_OPEN_MS = 2200

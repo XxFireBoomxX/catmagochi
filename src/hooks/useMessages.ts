@@ -4,6 +4,10 @@ import type { RelayMessage } from '../types'
 const RELAY_URL: string | undefined = import.meta.env.VITE_RELAY_URL
 const RELAY_TOKEN: string | undefined = import.meta.env.VITE_RELAY_TOKEN
 
+// Same ws(s):// -> http(s):// derivation useCareEvents/usePushSubscription
+// use for their own POST endpoints.
+const HTTP_RELAY_URL = RELAY_URL?.replace(/^ws/, 'http')
+
 const RECONNECT_MIN_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 
@@ -30,8 +34,10 @@ export function useMessages() {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'message') {
-            const { id, text, sentAt } = data
-            setMessages((current) => (current.some((m) => m.id === id) ? current : [...current, { id, text, sentAt }]))
+            const { id, text, sentAt, kind } = data
+            setMessages((current) =>
+              current.some((m) => m.id === id) ? current : [...current, { id, text, sentAt, kind }],
+            )
           }
         } catch {
           // ignore malformed frames
@@ -64,5 +70,19 @@ export function useMessages() {
     }
   }, [])
 
-  return { messages, dismiss }
+  // Fire-and-forget, matching sender.html's own send behavior -- unlike
+  // care events, a nudge isn't part of a replayed stat log, so there's no
+  // outbox to retry it from; a send attempted while offline just fails.
+  const send = useCallback((text: string, kind?: RelayMessage['kind']) => {
+    if (!HTTP_RELAY_URL || !RELAY_TOKEN) return
+    fetch(`${HTTP_RELAY_URL}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: RELAY_TOKEN, text, kind }),
+    }).catch(() => {
+      // offline/unreachable -- nothing to retry, see comment above
+    })
+  }, [])
+
+  return { messages, dismiss, send }
 }

@@ -124,6 +124,33 @@ describe('catmagochi relay server', () => {
     await ackMessage(body.id)
   })
 
+  test('POST /send stores and broadcasts a recognized kind (e.g. a nudge)', async () => {
+    const res = await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, text: 'Thinking of you', kind: 'nudge' }),
+    })
+    const body = await res.json()
+    const persisted = JSON.parse(readFileSync(join(dataDir, 'messages.json'), 'utf-8'))
+    const stored = persisted.find((m) => m.id === body.id)
+    assert.equal(stored.kind, 'nudge')
+    await ackMessage(body.id)
+  })
+
+  test('POST /send drops an unrecognized kind rather than rejecting the send', async () => {
+    const res = await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, text: 'hello', kind: 'not-a-real-kind' }),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    const persisted = JSON.parse(readFileSync(join(dataDir, 'messages.json'), 'utf-8'))
+    const stored = persisted.find((m) => m.id === body.id)
+    assert.equal(stored.kind, undefined)
+    await ackMessage(body.id)
+  })
+
   test('WS upgrade is rejected with the wrong token', async () => {
     const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=wrong`)
     const result = await new Promise((resolve) => {
@@ -275,7 +302,7 @@ describe('catmagochi relay server', () => {
     const res = await fetch(`${BASE}/care-event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: TOKEN, id: 'evt-live', type: 'play', hits: 3 }),
+      body: JSON.stringify({ token: TOKEN, id: 'evt-live', type: 'play' }),
     })
     assert.equal(res.status, 200)
 
@@ -283,7 +310,6 @@ describe('catmagochi relay server', () => {
     assert.equal(frame.type, 'care-event')
     assert.equal(frame.id, 'evt-live')
     assert.equal(frame.eventType, 'play')
-    assert.equal(frame.hits, 3)
 
     const stored = JSON.parse(readFileSync(join(dataDir, 'care-events.json'), 'utf-8'))
     assert.ok(stored.some((e) => e.id === 'evt-live'))

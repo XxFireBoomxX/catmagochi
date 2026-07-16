@@ -81,20 +81,8 @@ describe('useCareEvents', () => {
     act(() => {
       ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e1', eventType: 'feed', sentAt: 1 }) })
     })
-    expect(onEvent).toHaveBeenCalledWith('e1', 'feed', undefined)
+    expect(onEvent).toHaveBeenCalledWith('e1', 'feed')
     expect(ws.sent).toEqual([JSON.stringify({ type: 'ack', id: 'e1' })])
-  })
-
-  it('passes through the hit count for play events', async () => {
-    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
-    const onEvent = vi.fn()
-    renderHook(() => useCareEvents(onEvent))
-    const ws = MockWebSocket.instances[0]
-    ws.readyState = MockWebSocket.OPEN
-    act(() => {
-      ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e2', eventType: 'play', hits: 3, sentAt: 1 }) })
-    })
-    expect(onEvent).toHaveBeenCalledWith('e2', 'play', 3)
   })
 
   it('does not ack when the socket is not open', async () => {
@@ -106,7 +94,7 @@ describe('useCareEvents', () => {
     act(() => {
       ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e3', eventType: 'clean', sentAt: 1 }) })
     })
-    expect(onEvent).toHaveBeenCalledWith('e3', 'clean', undefined)
+    expect(onEvent).toHaveBeenCalledWith('e3', 'clean')
     expect(ws.sent).toEqual([])
   })
 
@@ -207,7 +195,7 @@ describe('useCareEvents', () => {
           'https://relay.test/care-event',
           expect.objectContaining({
             method: 'POST',
-            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed', hits: undefined }),
+            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed' }),
           }),
         )
       })
@@ -297,7 +285,7 @@ describe('useCareEvents', () => {
         expect(fetchMock).toHaveBeenCalledWith(
           'https://relay.test/care-event',
           expect.objectContaining({
-            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet', hits: undefined }),
+            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet' }),
           }),
         )
       })
