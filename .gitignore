@@ -15,6 +15,11 @@ dist-ssr
 server/messages.json
 coverage
 
+# Capacitor OTA release asset, built from dist/ and uploaded to the
+# matching GitHub release rather than committed -- see CLAUDE.md's
+# "Releases" section.
+bundle.zip
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
