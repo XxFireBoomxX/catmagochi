@@ -270,11 +270,10 @@ describe('usePet', () => {
       act(() => result.current.createPet('Feeder'))
       act(() => result.current.feed())
       expect(onCareEvent).toHaveBeenCalledTimes(1)
-      const [id, type, hits] = onCareEvent.mock.calls[0]
+      const [id, type] = onCareEvent.mock.calls[0]
       expect(typeof id).toBe('string')
       expect(id.length).toBeGreaterThan(0)
       expect(type).toBe('feed')
-      expect(hits).toBeUndefined()
     })
 
     it('does not emit a care event while sleeping', () => {
@@ -288,43 +287,33 @@ describe('usePet', () => {
   })
 
   describe('playGame', () => {
-    it('scales happiness gain and growth with hits, and costs energy/fullness/cleanliness', () => {
+    it('increases happiness and growth, and costs energy/fullness/cleanliness', () => {
       const { result } = renderHook(() => usePet())
       act(() => result.current.createPet('Player'))
-      act(() => result.current.playGame(3))
-      expect(result.current.save?.stats.happiness).toBe(97) // 80 + 2 + 5*3 = 97
-      expect(result.current.save?.stats.energy).toBe(70)
-      expect(result.current.save?.stats.fullness).toBe(75)
-      expect(result.current.save?.stats.cleanliness).toBe(75)
-      expect(result.current.save?.growth).toBe(7) // 1 + 2*3
+      act(() => result.current.playGame())
+      expect(result.current.save?.stats.happiness).toBe(90)
+      expect(result.current.save?.stats.energy).toBe(75)
+      expect(result.current.save?.stats.fullness).toBe(77)
+      expect(result.current.save?.stats.cleanliness).toBe(77)
+      expect(result.current.save?.growth).toBe(3)
       expect(result.current.save?.totalPlays).toBe(1)
-    })
-
-    it('still applies a minimum growth/happiness bump on zero hits', () => {
-      const { result } = renderHook(() => usePet())
-      act(() => result.current.createPet('Loser'))
-      act(() => result.current.playGame(0))
-      expect(result.current.save?.growth).toBe(1)
-      expect(result.current.save?.stats.happiness).toBe(82)
     })
 
     it('does nothing while sleeping', () => {
       const { result } = renderHook(() => usePet())
       act(() => result.current.createPet('Sleepy'))
       act(() => result.current.toggleSleep())
-      act(() => result.current.playGame(3))
+      act(() => result.current.playGame())
       expect(result.current.save?.growth).toBe(0)
     })
 
-    it('emits a care event carrying the hit count', () => {
+    it('emits a care event on success', () => {
       const onCareEvent = vi.fn()
       const { result } = renderHook(() => usePet(onCareEvent))
       act(() => result.current.createPet('Player'))
-      act(() => result.current.playGame(3))
+      act(() => result.current.playGame())
       expect(onCareEvent).toHaveBeenCalledTimes(1)
-      const [, type, hits] = onCareEvent.mock.calls[0]
-      expect(type).toBe('play')
-      expect(hits).toBe(3)
+      expect(onCareEvent.mock.calls[0][1]).toBe('play')
     })
   })
 
@@ -470,14 +459,14 @@ describe('usePet', () => {
       expect(result.current.save?.totalFeeds).toBe(1)
     })
 
-    it('applies a play event using the given hit count', () => {
+    it('applies a play event', () => {
       const { result } = renderHook(() => usePet())
       act(() => result.current.createPet('Remote'))
       act(() => {
-        result.current.applyRemoteEvent('evt-play', 'play', 3)
+        result.current.applyRemoteEvent('evt-play', 'play')
       })
-      expect(result.current.save?.growth).toBe(7)
-      expect(result.current.save?.stats.happiness).toBe(97)
+      expect(result.current.save?.growth).toBe(3)
+      expect(result.current.save?.stats.happiness).toBe(90)
     })
 
     it('is idempotent: replaying the same event id is a no-op the second time', () => {
@@ -536,7 +525,7 @@ describe('usePet', () => {
       const types: CareEventType[] = ['feed', 'clean', 'pet', 'play']
       for (const type of types) {
         act(() => {
-          result.current.applyRemoteEvent(`evt-${type}`, type, type === 'play' ? 1 : undefined)
+          result.current.applyRemoteEvent(`evt-${type}`, type)
         })
       }
       expect(result.current.save?.totalFeeds).toBe(1)

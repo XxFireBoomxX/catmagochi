@@ -243,4 +243,54 @@ describe('useMessages', () => {
       expect(result.current.messages).toHaveLength(1)
     })
   })
+
+  describe('send', () => {
+    let fetchMock: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+      fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+
+    it('is a no-op when relay env vars are unset', async () => {
+      const useMessages = await loadUseMessages('', '')
+      const { result } = renderHook(() => useMessages())
+      act(() => {
+        result.current.send('hello')
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('posts the text and an optional kind to /send', async () => {
+      fetchMock.mockResolvedValue({ ok: true })
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useMessages())
+      act(() => {
+        result.current.send('Thinking of you', 'nudge')
+      })
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://relay.test/send',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ token: 'tok', text: 'Thinking of you', kind: 'nudge' }),
+          }),
+        )
+      })
+    })
+
+    it('does not throw when the send fails (e.g. offline)', async () => {
+      fetchMock.mockRejectedValue(new Error('offline'))
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useMessages())
+      expect(() => {
+        act(() => {
+          result.current.send('hello')
+        })
+      }).not.toThrow()
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
 })

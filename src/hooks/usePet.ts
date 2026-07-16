@@ -65,7 +65,7 @@ function applyElapsed(stats: PetStats, sleeping: boolean, elapsedMs: number): Pe
 // The delta each care action applies -- shared between locally-triggered
 // actions and remote events replayed from another device (see usePet's
 // applyRemoteEvent), so both sides of a sync stay identical.
-function applyCareEvent(save: PetSave, type: CareEventType, hits?: number): PetSave {
+function applyCareEvent(save: PetSave, type: CareEventType): PetSave {
   switch (type) {
     case 'feed':
       return {
@@ -92,21 +92,23 @@ function applyCareEvent(save: PetSave, type: CareEventType, hits?: number): PetS
         totalPets: save.totalPets + 1,
         stats: { ...save.stats, happiness: clamp(save.stats.happiness + 3) },
       }
-    case 'play': {
-      const h = hits ?? 0
+    case 'play':
+      // A quick "thinking of you" nudge (see NudgePicker), not a skill-based
+      // mini-game anymore -- a flat reward like every other action, weighted
+      // toward happiness since that's the point of it. Light costs elsewhere
+      // keep it from being a strictly-better feed/clean substitute.
       return {
         ...save,
-        growth: save.growth + 1 + 2 * h,
+        growth: save.growth + 3,
         totalPlays: save.totalPlays + 1,
         stats: {
           ...save.stats,
-          happiness: clamp(save.stats.happiness + 2 + 5 * h),
-          energy: clamp(save.stats.energy - 10),
-          fullness: clamp(save.stats.fullness - 5),
-          cleanliness: clamp(save.stats.cleanliness - 5),
+          happiness: clamp(save.stats.happiness + 10),
+          energy: clamp(save.stats.energy - 5),
+          fullness: clamp(save.stats.fullness - 3),
+          cleanliness: clamp(save.stats.cleanliness - 3),
         },
       }
-    }
   }
 }
 
@@ -120,7 +122,7 @@ export function deriveMood(stats: PetStats, sleeping: boolean): Mood {
   return avg > 75 ? 'happy' : 'content'
 }
 
-export type OnCareEvent = (id: string, type: CareEventType, hits?: number) => void
+export type OnCareEvent = (id: string, type: CareEventType) => void
 
 export function usePet(onCareEvent?: OnCareEvent) {
   const [save, setSave] = useState<PetSave | null>(() => {
@@ -174,10 +176,10 @@ export function usePet(onCareEvent?: OnCareEvent) {
   // applied (so a later echo of it back from the relay is a no-op), and
   // notifies the caller so it can hand the event off to the relay.
   const emitLocalEvent = useCallback(
-    (type: CareEventType, hits?: number) => {
+    (type: CareEventType) => {
       const id = crypto.randomUUID()
       appliedEventIds.current.add(id)
-      onCareEvent?.(id, type, hits)
+      onCareEvent?.(id, type)
     },
     [onCareEvent],
   )
@@ -188,14 +190,11 @@ export function usePet(onCareEvent?: OnCareEvent) {
     emitLocalEvent('feed')
   }, [emitLocalEvent])
 
-  const playGame = useCallback(
-    (hits: number) => {
-      if (!saveRef.current || saveRef.current.sleeping) return
-      setSave((current) => (current ? applyCareEvent(current, 'play', hits) : current))
-      emitLocalEvent('play', hits)
-    },
-    [emitLocalEvent],
-  )
+  const playGame = useCallback(() => {
+    if (!saveRef.current || saveRef.current.sleeping) return
+    setSave((current) => (current ? applyCareEvent(current, 'play') : current))
+    emitLocalEvent('play')
+  }, [emitLocalEvent])
 
   const clean = useCallback(() => {
     if (!saveRef.current || saveRef.current.sleeping) return
@@ -224,10 +223,10 @@ export function usePet(onCareEvent?: OnCareEvent) {
   // skips the `sleeping` gate local actions have -- sleeping is a
   // per-device UI toggle, not synced state, so it shouldn't block a
   // remote party's actions from landing here.
-  const applyRemoteEvent = useCallback((id: string, type: CareEventType, hits?: number) => {
+  const applyRemoteEvent = useCallback((id: string, type: CareEventType) => {
     if (appliedEventIds.current.has(id)) return false
     appliedEventIds.current.add(id)
-    setSave((current) => (current ? applyCareEvent(current, type, hits) : current))
+    setSave((current) => (current ? applyCareEvent(current, type) : current))
     return true
   }, [])
 

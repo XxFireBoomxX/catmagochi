@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { StartScreen } from './components/StartScreen'
 import { AsciiCat } from './components/AsciiCat'
-import { YarnGame } from './components/YarnGame'
+import { NudgePicker } from './components/NudgePicker'
 import { MessageView } from './components/MessageView'
 import { Menu } from './components/Menu'
 import { StatsWindow } from './components/StatsWindow'
@@ -66,19 +66,19 @@ function App() {
   // creates the WebSocket connection) without a chicken-and-egg ordering
   // problem -- see the assignment right before the early return below,
   // which mirrors the saveRef-updated-every-render pattern in usePet.ts.
-  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType, hits?: number) => void>(() => {})
+  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType) => void>(() => {})
   const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage, applyRemoteEvent } = usePet(
-    (id, type, hits) => careEvents.emit(id, type, hits),
+    (id, type) => careEvents.emit(id, type),
   )
-  const careEvents = useCareEvents((id, type, hits) => handleRemoteCareEventRef.current(id, type, hits))
-  const { messages, dismiss } = useMessages()
+  const careEvents = useCareEvents((id, type) => handleRemoteCareEventRef.current(id, type))
+  const { messages, dismiss, send } = useMessages()
   const { history, record } = useMessageHistory()
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
   const [showStart, setShowStart] = useState(true)
   const [pulsed, setPulsed] = useState<Set<keyof PetStats>>(new Set())
-  const [gameActive, setGameActive] = useState(false)
+  const [playPickerOpen, setPlayPickerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
   const [showGrowthProgress, setShowGrowthProgress] = useState(false)
@@ -162,11 +162,11 @@ function App() {
   // gets (stat pulse, cat glyph cue, occasional bonus caption) -- applied
   // is false for a dedup'd echo of our own action or an already-seen event
   // replayed after reconnect, which should stay silent.
-  handleRemoteCareEventRef.current = (id, type, hits) => {
-    const applied = applyRemoteEvent(id, type, hits)
+  handleRemoteCareEventRef.current = (id, type) => {
+    const applied = applyRemoteEvent(id, type)
     if (!applied) return
     for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
-    if (type === 'feed' || type === 'clean') triggerCue(type)
+    if (type === 'feed' || type === 'clean' || type === 'play') triggerCue(type)
     if (type !== 'play') maybeShowActionFlavor(type)
   }
 
@@ -176,28 +176,32 @@ function App() {
     return applied
   }
 
-  const handleGameComplete = (hits: number) => {
-    playGame(hits)
-    pulse('happiness')
-    pulse('energy')
-    pulse('fullness')
-    pulse('cleanliness')
-    setGameActive(false)
+  const handleSendNudge = (text: string) => {
+    playGame()
+    for (const stat of CARE_EVENT_STATS.play) pulse(stat)
+    triggerCue('play')
+    send(text, 'nudge')
+    setPlayPickerOpen(false)
   }
 
   const handleDismissMessage = (message: RelayMessage) => {
     dismiss(message.id)
     record(message)
-    receiveMessage()
-    pulse('happiness')
+    // A nudge already rewarded the shared cat via its 'play' care event at
+    // send time -- the generic dismiss bonus is only for freely-typed notes,
+    // which have no care event of their own.
+    if (message.kind !== 'nudge') {
+      receiveMessage()
+      pulse('happiness')
+    }
   }
 
-  const actionsDisabled = sleeping || gameActive || messages.length > 0
+  const actionsDisabled = sleeping || playPickerOpen || messages.length > 0
 
   return (
     <div className="game">
       <div className="version-label">v{__APP_VERSION__}</div>
-      <button className="menu-button" onClick={() => setMenuOpen(true)} disabled={gameActive}>[MENU]</button>
+      <button className="menu-button" onClick={() => setMenuOpen(true)} disabled={playPickerOpen}>[MENU]</button>
 
       <header>
         <h1>
@@ -242,8 +246,8 @@ function App() {
 
       {growBanner && <div className="grow-banner">{growBanner}</div>}
 
-      {gameActive ? (
-        <YarnGame onComplete={handleGameComplete} />
+      {playPickerOpen ? (
+        <NudgePicker onSend={handleSendNudge} onCancel={() => setPlayPickerOpen(false)} />
       ) : messages.length > 0 ? (
         <MessageView message={messages[0]} onDismiss={() => handleDismissMessage(messages[0])} />
       ) : (
@@ -259,7 +263,7 @@ function App() {
 
       <div className="actions">
         <button onClick={() => { feed(); pulse('fullness'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
-        <button onClick={() => setGameActive(true)} disabled={actionsDisabled}>[PLAY]</button>
+        <button onClick={() => setPlayPickerOpen(true)} disabled={actionsDisabled}>[PLAY]</button>
         <button onClick={() => { clean(); pulse('cleanliness'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
         <button
           onClick={() => {
@@ -268,7 +272,7 @@ function App() {
             triggerCue(cue)
             maybeShowActionFlavor(cue)
           }}
-          disabled={gameActive || messages.length > 0}
+          disabled={playPickerOpen || messages.length > 0}
           className={sleeping ? 'active' : ''}
         >
           {sleeping ? '[WAKE]' : '[SLEEP]'}

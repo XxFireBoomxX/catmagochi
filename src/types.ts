@@ -9,7 +9,7 @@ export type Mood = 'happy' | 'hungry' | 'tired' | 'dirty' | 'sad' | 'sleeping' |
 
 export type Stage = 'kitten' | 'young' | 'adult'
 
-export type ActionCueType = 'feed' | 'clean' | 'sleep' | 'wake'
+export type ActionCueType = 'feed' | 'clean' | 'sleep' | 'wake' | 'play'
 
 // The subset of care actions that sync between devices for the shared-pet
 // feature -- deliberately excludes sleep/wake, which stay per-device (see
@@ -33,4 +33,9 @@ export interface RelayMessage {
   id: string
   text: string
   sentAt: number
+  // Present for a canned "PLAY" nudge (see NudgePicker); absent for a
+  // freely-typed note sent from sender.html. Lets the dismiss handler
+  // skip the generic receiveMessage() bonus for nudges, since those
+  // already reward the shared cat via the 'play' care event at send time.
+  kind?: 'nudge'
 }
