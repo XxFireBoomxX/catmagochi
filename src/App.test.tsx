@@ -106,6 +106,22 @@ describe('App', () => {
       })
       expect(screen.getByText('[FEED]')).toBeInTheDocument()
     })
+
+    it('skips the boot screen entirely on a later open, once it has been seen', () => {
+      localStorage.setItem('catmagochi-start-seen-v1', '1')
+      seedSave()
+      render(<App />)
+      expect(screen.queryByRole('heading', { name: 'Catmagochi' })).not.toBeInTheDocument()
+      expect(screen.getByText('[FEED]')).toBeInTheDocument()
+    })
+
+    it('marks the boot screen as seen once it completes', () => {
+      render(<App />)
+      act(() => {
+        vi.advanceTimersByTime(START_TOTAL_MS)
+      })
+      expect(localStorage.getItem('catmagochi-start-seen-v1')).toBe('1')
+    })
   })
 
   describe('adoption flow', () => {

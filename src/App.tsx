@@ -23,6 +23,7 @@ const ACTION_FLAVOR_CHANCE = 0.25
 const ACTION_FLAVOR_MS = 2500
 const SEND_STATUS_MS = 2500
 const NOTIFICATION_PROMPT_SEEN_KEY = 'catmagochi-notification-prompt-seen-v1'
+const START_SEEN_KEY = 'catmagochi-start-seen-v1'
 
 // Which stat bars visibly pulse for a synced care event, mirroring the
 // deltas applyCareEvent applies in usePet.ts.
@@ -78,7 +79,7 @@ function App() {
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
-  const [showStart, setShowStart] = useState(true)
+  const [showStart, setShowStart] = useState(() => !localStorage.getItem(START_SEEN_KEY))
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(
     () => !localStorage.getItem(NOTIFICATION_PROMPT_SEEN_KEY),
   )
@@ -135,7 +136,14 @@ function App() {
   }, [stage])
 
   if (showStart) {
-    return <StartScreen onDone={() => setShowStart(false)} />
+    return (
+      <StartScreen
+        onDone={() => {
+          localStorage.setItem(START_SEEN_KEY, '1')
+          setShowStart(false)
+        }}
+      />
+    )
   }
 
   if (!save) {
