@@ -154,6 +154,14 @@ const server = createServer((req, res) => {
           sentAt: Date.now(),
           kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
         }
+        // No id-dedup on push -- a client-retried id (see useMessages.ts's
+        // outbox) becomes a second pending entry here even if the first
+        // POST actually succeeded. Ack removes every copy sharing that id
+        // (see the 'ack' handler below), so this is at-least-once by
+        // design, not exactly-once: the accepted gap is a duplicate
+        // reappearing if the recipient dismissed the first copy before the
+        // retry lands. Judged not worth a persistent seen-ids set for a
+        // personal-scale relay.
         pending.push(message)
         persist()
         broadcast(message)
