@@ -137,6 +137,20 @@ export function useMessages() {
   // or the component unmounts mid-request), then makes one immediate
   // attempt and resolves based on *that* attempt specifically -- it does
   // not wait around for a later background retry to eventually succeed.
+  //
+  // Deliberately calls sendEntry() directly rather than going through
+  // flush()'s flushing-guarded loop: routing through flush() would mean a
+  // send() that lands while a flush() happens to already be running just
+  // returns without ever attempting anything. The accepted tradeoff is a
+  // narrow, self-correcting race -- a send() and a reconnect-triggered
+  // flush() can, in principle, both attempt the same freshly-queued entry
+  // at once. If both succeed, the relay gets one duplicate POST for that
+  // id, but the receiving device's own id-based dedup (see the onmessage
+  // handler above) means the recipient only ever sees the message once;
+  // the worst realistic outcome is send() resolving to 'queued' for a
+  // message that, in fact, already went out via the other path. Judged not
+  // worth the added complexity of a shared lock for a personal-scale relay
+  // that isn't a delivery guarantee system to begin with.
   const send = useCallback(
     async (text: string, kind?: RelayMessage['kind']): Promise<SendStatus> => {
       if (!HTTP_RELAY_URL || !RELAY_TOKEN) return 'unconfigured'
