@@ -252,44 +252,91 @@ describe('useMessages', () => {
       vi.stubGlobal('fetch', fetchMock)
     })
 
-    it('is a no-op when relay env vars are unset', async () => {
+    it('resolves to "unconfigured" and does not queue anything when relay env vars are unset', async () => {
       const useMessages = await loadUseMessages('', '')
       const { result } = renderHook(() => useMessages())
-      act(() => {
-        result.current.send('hello')
+      let status: string | undefined
+      await act(async () => {
+        status = await result.current.send('hello')
       })
+      expect(status).toBe('unconfigured')
       expect(fetchMock).not.toHaveBeenCalled()
+      expect(localStorage.getItem('catmagochi-message-outbox-v1')).toBeNull()
     })
 
-    it('posts the text and an optional kind to /send', async () => {
+    it('resolves to "sent" and posts text/kind/a generated id on success', async () => {
       fetchMock.mockResolvedValue({ ok: true })
       const useMessages = await loadUseMessages('wss://relay.test', 'tok')
       const { result } = renderHook(() => useMessages())
+      let status: string | undefined
+      await act(async () => {
+        status = await result.current.send('Thinking of you', 'nudge')
+      })
+      expect(status).toBe('sent')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, options] = fetchMock.mock.calls[0]
+      expect(url).toBe('https://relay.test/send')
+      expect(options.method).toBe('POST')
+      const sentBody = JSON.parse(options.body)
+      expect(sentBody.token).toBe('tok')
+      expect(sentBody.text).toBe('Thinking of you')
+      expect(sentBody.kind).toBe('nudge')
+      expect(typeof sentBody.id).toBe('string')
+      expect(sentBody.id.length).toBeGreaterThan(0)
+      expect(JSON.parse(localStorage.getItem('catmagochi-message-outbox-v1') ?? '[]')).toEqual([])
+    })
+
+    it('resolves to "queued" and keeps the entry in the outbox when the send fails', async () => {
+      fetchMock.mockRejectedValue(new Error('offline'))
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useMessages())
+      let status: string | undefined
+      await act(async () => {
+        status = await result.current.send('hello')
+      })
+      expect(status).toBe('queued')
+      const outbox = JSON.parse(localStorage.getItem('catmagochi-message-outbox-v1') ?? '[]')
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].text).toBe('hello')
+    })
+
+    it('retries a queued message when the socket reconnects, and it eventually sends', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ ok: true })
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useMessages())
+      await act(async () => {
+        await result.current.send('hello')
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        MockWebSocket.instances[0].onopen?.()
+      })
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      })
+      await waitFor(() => {
+        expect(JSON.parse(localStorage.getItem('catmagochi-message-outbox-v1') ?? '[]')).toEqual([])
+      })
+    })
+
+    it('loads a previously-persisted outbox and flushes it once the socket opens', async () => {
+      localStorage.setItem(
+        'catmagochi-message-outbox-v1',
+        JSON.stringify([{ id: 'stale-1', text: 'left over', kind: undefined }]),
+      )
+      fetchMock.mockResolvedValue({ ok: true })
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      renderHook(() => useMessages())
       act(() => {
-        result.current.send('Thinking of you', 'nudge')
+        MockWebSocket.instances[0].onopen?.()
       })
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
           'https://relay.test/send',
           expect.objectContaining({
-            method: 'POST',
-            body: JSON.stringify({ token: 'tok', text: 'Thinking of you', kind: 'nudge' }),
+            body: JSON.stringify({ token: 'tok', id: 'stale-1', text: 'left over', kind: undefined }),
           }),
         )
-      })
-    })
-
-    it('does not throw when the send fails (e.g. offline)', async () => {
-      fetchMock.mockRejectedValue(new Error('offline'))
-      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
-      const { result } = renderHook(() => useMessages())
-      expect(() => {
-        act(() => {
-          result.current.send('hello')
-        })
-      }).not.toThrow()
-      await waitFor(() => {
-        expect(fetchMock).toHaveBeenCalledTimes(1)
       })
     })
   })
