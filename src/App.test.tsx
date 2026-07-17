@@ -469,6 +469,57 @@ describe('App', () => {
     })
   })
 
+  describe('nudge send feedback', () => {
+    it('shows "Sent." when the send resolves to sent', async () => {
+      mockSend.mockResolvedValue('sent')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Sent.')).toBeInTheDocument()
+    })
+
+    it('shows the queued message when the send resolves to queued', async () => {
+      mockSend.mockResolvedValue('queued')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Saved — will send when back online.')).toBeInTheDocument()
+    })
+
+    it('shows nothing when the send resolves to unconfigured', async () => {
+      mockSend.mockResolvedValue('unconfigured')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Saved/)).not.toBeInTheDocument()
+    })
+
+    it('clears the send-status caption after its display window', async () => {
+      mockSend.mockResolvedValue('sent')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Sent.')).toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(2_500)
+      })
+      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
+    })
+  })
+
   describe('growth banner', () => {
     it('shows no banner for the initial kitten stage', () => {
       seedSave({ growth: 0 })
