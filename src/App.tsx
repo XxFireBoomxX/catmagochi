@@ -22,6 +22,7 @@ import './App.css'
 const ACTION_FLAVOR_CHANCE = 0.25
 const ACTION_FLAVOR_MS = 2500
 const SEND_STATUS_MS = 2500
+const NOTIFICATION_PROMPT_SEEN_KEY = 'catmagochi-notification-prompt-seen-v1'
 
 // Which stat bars visibly pulse for a synced care event, mirroring the
 // deltas applyCareEvent applies in usePet.ts.
@@ -78,6 +79,9 @@ function App() {
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
   const [showStart, setShowStart] = useState(true)
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(
+    () => !localStorage.getItem(NOTIFICATION_PROMPT_SEEN_KEY),
+  )
   const [pulsed, setPulsed] = useState<Set<keyof PetStats>>(new Set())
   const [playPickerOpen, setPlayPickerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -220,6 +224,16 @@ function App() {
     }
   }
 
+  const dismissNotificationPrompt = () => {
+    localStorage.setItem(NOTIFICATION_PROMPT_SEEN_KEY, '1')
+    setShowNotificationPrompt(false)
+  }
+
+  const enableNotifications = () => {
+    updateNotificationSettings({ global: true })
+    dismissNotificationPrompt()
+  }
+
   const actionsDisabled = sleeping || playPickerOpen || messages.length > 0
 
   return (
@@ -280,6 +294,16 @@ function App() {
       )}
 
       {growBanner && <div className="grow-banner">{growBanner}</div>}
+
+      {showNotificationPrompt && !notificationSettings.global && (
+        <div className="notification-banner">
+          <span>Turn on notifications so you don't miss a nudge, even when the app's closed.</span>
+          <div className="notification-banner-actions">
+            <button onClick={enableNotifications}>[ ENABLE ]</button>
+            <button onClick={dismissNotificationPrompt}>[ NOT NOW ]</button>
+          </div>
+        </div>
+      )}
 
       {playPickerOpen ? (
         <NudgePicker onSend={handleSendNudge} onCancel={() => setPlayPickerOpen(false)} />

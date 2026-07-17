@@ -636,4 +636,49 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'Mochi' })).toBeInTheDocument()
     })
   })
+
+  describe('notification prompt', () => {
+    it('shows the prompt after adoption when notifications are off', () => {
+      seedSave()
+      renderApp()
+      expect(screen.getByText(/Turn on notifications/)).toBeInTheDocument()
+    })
+
+    it('does not show the prompt once notifications are already enabled', () => {
+      seedSave()
+      localStorage.setItem(
+        'catmagochi-notification-settings-v1',
+        JSON.stringify({ global: true, message: true, attention: true, update: true }),
+      )
+      renderApp()
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+    })
+
+    it('does not show the prompt once it has already been dismissed', () => {
+      seedSave()
+      localStorage.setItem('catmagochi-notification-prompt-seen-v1', '1')
+      renderApp()
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+    })
+
+    it('[ ENABLE ] turns notifications on and dismisses the prompt', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[ ENABLE ]'))
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+      const settings = JSON.parse(localStorage.getItem('catmagochi-notification-settings-v1')!)
+      expect(settings.global).toBe(true)
+      expect(localStorage.getItem('catmagochi-notification-prompt-seen-v1')).toBe('1')
+    })
+
+    it('[ NOT NOW ] dismisses the prompt without changing settings', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[ NOT NOW ]'))
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+      expect(localStorage.getItem('catmagochi-notification-prompt-seen-v1')).toBe('1')
+      const stored = localStorage.getItem('catmagochi-notification-settings-v1')
+      expect(stored ? JSON.parse(stored).global : false).toBe(false)
+    })
+  })
 })
