@@ -136,7 +136,7 @@ const server = createServer((req, res) => {
     req.on('end', () => {
       setCors(res)
       try {
-        const { token, text, kind } = JSON.parse(body)
+        const { token, text, kind, id } = JSON.parse(body)
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -149,7 +149,7 @@ const server = createServer((req, res) => {
           return
         }
         const message = {
-          id: randomUUID(),
+          id: typeof id === 'string' && id ? id : randomUUID(),
           text: trimmed,
           sentAt: Date.now(),
           kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
