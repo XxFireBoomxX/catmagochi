@@ -50,3 +50,10 @@
 .nudge-cancel:hover {
   color: var(--text);
 }
+
+.nudge-intro {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-soft);
+  margin: 0 0 0.3rem;
+}

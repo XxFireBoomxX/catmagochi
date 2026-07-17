@@ -168,11 +168,11 @@ describe('usePet', () => {
       }),
     )
     const { result } = renderHook(() => usePet())
-    // AWAKE_DECAY.fullness = -2/min * 10min = -20
-    expect(result.current.save?.stats.fullness).toBe(60)
-    expect(result.current.save?.stats.happiness).toBe(65)
-    expect(result.current.save?.stats.energy).toBe(70)
-    expect(result.current.save?.stats.cleanliness).toBe(70)
+    // AWAKE_DECAY.fullness = -0.3/min * 10min = -3
+    expect(result.current.save?.stats.fullness).toBe(77)
+    expect(result.current.save?.stats.happiness).toBe(78)
+    expect(result.current.save?.stats.energy).toBe(78.5)
+    expect(result.current.save?.stats.cleanliness).toBe(78.5)
   })
 
   it('catches up stats for elapsed time since lastUpdate on load, sleep regen', () => {
@@ -191,6 +191,25 @@ describe('usePet', () => {
     // SLEEP_RATE.energy = +4/min * 10min = +40, clamped to 100
     expect(result.current.save?.stats.energy).toBe(100)
     expect(result.current.save?.stats.happiness).toBe(80)
+  })
+
+  it('an overnight sleep no longer bottoms out fullness/cleanliness', () => {
+    const eightHoursAgo = Date.now() - 8 * 60 * 60_000
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({
+        name: 'Overnight',
+        stats: { fullness: 100, happiness: 80, energy: 80, cleanliness: 80 },
+        sleeping: true,
+        lastUpdate: eightHoursAgo,
+        growth: 0,
+      }),
+    )
+    const { result } = renderHook(() => usePet())
+    // SLEEP_RATE.fullness = -0.1/min * 480min = -48 -> 100-48 = 52
+    expect(result.current.save?.stats.fullness).toBe(52)
+    // SLEEP_RATE.cleanliness = -0.05/min * 480min = -24 -> 80-24 = 56
+    expect(result.current.save?.stats.cleanliness).toBe(56)
   })
 
   it('caps catch-up at 12 simulated hours for very long absences', () => {

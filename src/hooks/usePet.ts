@@ -8,8 +8,8 @@ const STAT_MAX = 100
 const PET_COOLDOWN_MS = 2_500
 
 // Decay/regen rates are per minute of elapsed real time.
-const AWAKE_DECAY = { fullness: -2, happiness: -1.5, energy: -1, cleanliness: -1 }
-const SLEEP_RATE = { fullness: -0.5, happiness: 0, energy: 4, cleanliness: -0.3 }
+const AWAKE_DECAY = { fullness: -0.3, happiness: -0.2, energy: -0.15, cleanliness: -0.15 }
+const SLEEP_RATE = { fullness: -0.1, happiness: 0, energy: 4, cleanliness: -0.05 }
 
 const clamp = (n: number) => Math.min(STAT_MAX, Math.max(STAT_MIN, n))
 

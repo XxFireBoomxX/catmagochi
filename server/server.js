@@ -136,7 +136,7 @@ const server = createServer((req, res) => {
     req.on('end', () => {
       setCors(res)
       try {
-        const { token, text, kind } = JSON.parse(body)
+        const { token, text, kind, id } = JSON.parse(body)
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -149,11 +149,19 @@ const server = createServer((req, res) => {
           return
         }
         const message = {
-          id: randomUUID(),
+          id: typeof id === 'string' && id ? id : randomUUID(),
           text: trimmed,
           sentAt: Date.now(),
           kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
         }
+        // No id-dedup on push -- a client-retried id (see useMessages.ts's
+        // outbox) becomes a second pending entry here even if the first
+        // POST actually succeeded. Ack removes every copy sharing that id
+        // (see the 'ack' handler below), so this is at-least-once by
+        // design, not exactly-once: the accepted gap is a duplicate
+        // reappearing if the recipient dismissed the first copy before the
+        // retry lands. Judged not worth a persistent seen-ids set for a
+        // personal-scale relay.
         pending.push(message)
         persist()
         broadcast(message)
