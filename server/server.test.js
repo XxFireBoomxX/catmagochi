@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import webpush from 'web-push'
+import { WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = 19081
@@ -108,6 +109,22 @@ describe('catmagochi relay server', () => {
 
     // clean up so later tests see a known pending-queue state
     await ackMessage(body.id)
+  })
+
+  test('POST /send honors a client-supplied id instead of generating one', async () => {
+    const res = await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, text: 'client id test', id: 'client-generated-123' }),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.id, 'client-generated-123')
+
+    const persisted = JSON.parse(readFileSync(join(dataDir, 'messages.json'), 'utf-8'))
+    assert.ok(persisted.some((m) => m.id === 'client-generated-123' && m.text === 'client id test'))
+
+    await ackMessage('client-generated-123')
   })
 
   test('POST /send trims text to the 500 character max', async () => {

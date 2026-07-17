@@ -21,6 +21,9 @@ import './App.css'
 
 const ACTION_FLAVOR_CHANCE = 0.25
 const ACTION_FLAVOR_MS = 2500
+const SEND_STATUS_MS = 2500
+const NOTIFICATION_PROMPT_SEEN_KEY = 'catmagochi-notification-prompt-seen-v1'
+const START_SEEN_KEY = 'catmagochi-start-seen-v1'
 
 // Which stat bars visibly pulse for a synced care event, mirroring the
 // deltas applyCareEvent applies in usePet.ts.
@@ -76,7 +79,10 @@ function App() {
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
-  const [showStart, setShowStart] = useState(true)
+  const [showStart, setShowStart] = useState(() => !localStorage.getItem(START_SEEN_KEY))
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(
+    () => !localStorage.getItem(NOTIFICATION_PROMPT_SEEN_KEY),
+  )
   const [pulsed, setPulsed] = useState<Set<keyof PetStats>>(new Set())
   const [playPickerOpen, setPlayPickerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -86,14 +92,22 @@ function App() {
   const [actionCue, setActionCue] = useState<{ type: ActionCueType } | null>(null)
   const [actionFlavor, setActionFlavor] = useState<string | null>(null)
   const [captionPop, setCaptionPop] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
+  const [sendStatusCaption, setSendStatusCaption] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
   const actionFlavorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const sendStatusTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const captionKey = useRef(0)
+  const sendStatusKey = useRef(0)
   const flavorText = useFlavorText(mood)
   const prevStage = useRef<Stage | null>(null)
   const stage = save ? deriveStage(save.growth) : null
   const captionText = save ? `${save.name} ${actionFlavor ?? flavorText}` : null
 
-  useEffect(() => () => clearTimeout(actionFlavorTimer.current), [])
+  useEffect(() => {
+    return () => {
+      clearTimeout(actionFlavorTimer.current)
+      clearTimeout(sendStatusTimer.current)
+    }
+  }, [])
 
   // Every time the caption text actually changes (mood swap, idle flavor
   // line, or a post-action bonus line), pop it up at a fresh random spot
@@ -122,7 +136,14 @@ function App() {
   }, [stage])
 
   if (showStart) {
-    return <StartScreen onDone={() => setShowStart(false)} />
+    return (
+      <StartScreen
+        onDone={() => {
+          localStorage.setItem(START_SEEN_KEY, '1')
+          setShowStart(false)
+        }}
+      />
+    )
   }
 
   if (!save) {
@@ -176,12 +197,27 @@ function App() {
     return applied
   }
 
-  const handleSendNudge = (text: string) => {
+  const showSendStatus = (text: string) => {
+    sendStatusKey.current += 1
+    setSendStatusCaption({
+      text,
+      top: 10 + Math.random() * 35,
+      left: 15 + Math.random() * 60,
+      key: sendStatusKey.current,
+    })
+    clearTimeout(sendStatusTimer.current)
+    sendStatusTimer.current = setTimeout(() => setSendStatusCaption(null), SEND_STATUS_MS)
+  }
+
+  const handleSendNudge = async (text: string) => {
     playGame()
     for (const stat of CARE_EVENT_STATS.play) pulse(stat)
     triggerCue('play')
-    send(text, 'nudge')
     setPlayPickerOpen(false)
+    const status = await send(text, 'nudge')
+    if (status === 'sent') showSendStatus('Sent.')
+    else if (status === 'queued') showSendStatus('Saved — will send when back online.')
+    // 'unconfigured' -- no caption, this is normal standalone/solo use
   }
 
   const handleDismissMessage = (message: RelayMessage) => {
@@ -194,6 +230,16 @@ function App() {
       receiveMessage()
       pulse('happiness')
     }
+  }
+
+  const dismissNotificationPrompt = () => {
+    localStorage.setItem(NOTIFICATION_PROMPT_SEEN_KEY, '1')
+    setShowNotificationPrompt(false)
+  }
+
+  const enableNotifications = () => {
+    updateNotificationSettings({ global: true })
+    dismissNotificationPrompt()
   }
 
   const actionsDisabled = sleeping || playPickerOpen || messages.length > 0
@@ -244,7 +290,28 @@ function App() {
         </div>
       )}
 
+      {sendStatusCaption && (
+        <div
+          key={sendStatusCaption.key}
+          className="floating-caption"
+          style={{ top: `${sendStatusCaption.top}%`, left: `${sendStatusCaption.left}%` }}
+          aria-live="polite"
+        >
+          {sendStatusCaption.text}
+        </div>
+      )}
+
       {growBanner && <div className="grow-banner">{growBanner}</div>}
+
+      {showNotificationPrompt && !notificationSettings.global && (
+        <div className="notification-banner">
+          <span>Turn on notifications so you don't miss a nudge, even when the app's closed.</span>
+          <div className="notification-banner-actions">
+            <button onClick={enableNotifications}>[ ENABLE ]</button>
+            <button onClick={dismissNotificationPrompt}>[ NOT NOW ]</button>
+          </div>
+        </div>
+      )}
 
       {playPickerOpen ? (
         <NudgePicker onSend={handleSendNudge} onCancel={() => setPlayPickerOpen(false)} />

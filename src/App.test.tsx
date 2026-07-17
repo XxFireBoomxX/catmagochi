@@ -106,6 +106,22 @@ describe('App', () => {
       })
       expect(screen.getByText('[FEED]')).toBeInTheDocument()
     })
+
+    it('skips the boot screen entirely on a later open, once it has been seen', () => {
+      localStorage.setItem('catmagochi-start-seen-v1', '1')
+      seedSave()
+      render(<App />)
+      expect(screen.queryByRole('heading', { name: 'Catmagochi' })).not.toBeInTheDocument()
+      expect(screen.getByText('[FEED]')).toBeInTheDocument()
+    })
+
+    it('marks the boot screen as seen once it completes', () => {
+      render(<App />)
+      act(() => {
+        vi.advanceTimersByTime(START_TOTAL_MS)
+      })
+      expect(localStorage.getItem('catmagochi-start-seen-v1')).toBe('1')
+    })
   })
 
   describe('adoption flow', () => {
@@ -469,6 +485,57 @@ describe('App', () => {
     })
   })
 
+  describe('nudge send feedback', () => {
+    it('shows "Sent." when the send resolves to sent', async () => {
+      mockSend.mockResolvedValue('sent')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Sent.')).toBeInTheDocument()
+    })
+
+    it('shows the queued message when the send resolves to queued', async () => {
+      mockSend.mockResolvedValue('queued')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Saved — will send when back online.')).toBeInTheDocument()
+    })
+
+    it('shows nothing when the send resolves to unconfigured', async () => {
+      mockSend.mockResolvedValue('unconfigured')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Saved/)).not.toBeInTheDocument()
+    })
+
+    it('clears the send-status caption after its display window', async () => {
+      mockSend.mockResolvedValue('sent')
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
+      })
+      expect(screen.getByText('Sent.')).toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(2_500)
+      })
+      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
+    })
+  })
+
   describe('growth banner', () => {
     it('shows no banner for the initial kitten stage', () => {
       seedSave({ growth: 0 })
@@ -583,6 +650,51 @@ describe('App', () => {
       seedSave()
       renderApp()
       expect(screen.getByRole('heading', { name: 'Mochi' })).toBeInTheDocument()
+    })
+  })
+
+  describe('notification prompt', () => {
+    it('shows the prompt after adoption when notifications are off', () => {
+      seedSave()
+      renderApp()
+      expect(screen.getByText(/Turn on notifications/)).toBeInTheDocument()
+    })
+
+    it('does not show the prompt once notifications are already enabled', () => {
+      seedSave()
+      localStorage.setItem(
+        'catmagochi-notification-settings-v1',
+        JSON.stringify({ global: true, message: true, attention: true, update: true }),
+      )
+      renderApp()
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+    })
+
+    it('does not show the prompt once it has already been dismissed', () => {
+      seedSave()
+      localStorage.setItem('catmagochi-notification-prompt-seen-v1', '1')
+      renderApp()
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+    })
+
+    it('[ ENABLE ] turns notifications on and dismisses the prompt', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[ ENABLE ]'))
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+      const settings = JSON.parse(localStorage.getItem('catmagochi-notification-settings-v1')!)
+      expect(settings.global).toBe(true)
+      expect(localStorage.getItem('catmagochi-notification-prompt-seen-v1')).toBe('1')
+    })
+
+    it('[ NOT NOW ] dismisses the prompt without changing settings', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[ NOT NOW ]'))
+      expect(screen.queryByText(/Turn on notifications/)).not.toBeInTheDocument()
+      expect(localStorage.getItem('catmagochi-notification-prompt-seen-v1')).toBe('1')
+      const stored = localStorage.getItem('catmagochi-notification-settings-v1')
+      expect(stored ? JSON.parse(stored).global : false).toBe(false)
     })
   })
 })
