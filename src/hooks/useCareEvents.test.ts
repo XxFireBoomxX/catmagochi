@@ -85,7 +85,7 @@ describe('useCareEvents', () => {
 
   it('applies an incoming care-event frame and acks it', async () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
-    const onEvent = vi.fn()
+    const onEvent = vi.fn(() => true)
     renderHook(() => useCareEvents(onEvent))
     const ws = MockWebSocket.instances[0]
     ws.readyState = MockWebSocket.OPEN
@@ -96,9 +96,26 @@ describe('useCareEvents', () => {
     expect(ws.sent).toEqual([JSON.stringify({ type: 'ack', id: 'e1' })])
   })
 
+  // An ack tells the relay "delivered, drop it" -- and because the pending
+  // queue is shared, dropping it means the other device never sees it either.
+  // So only ack what actually landed: during the boot splash / name screen
+  // there is no pet yet and applyRemoteEvent reports false.
+  it('does not ack an event the app reports it could not apply', async () => {
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    const onEvent = vi.fn(() => false)
+    renderHook(() => useCareEvents(onEvent))
+    const ws = MockWebSocket.instances[0]
+    ws.readyState = MockWebSocket.OPEN
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e-unapplied', eventType: 'feed', sentAt: 1 }) })
+    })
+    expect(onEvent).toHaveBeenCalledWith('e-unapplied', 'feed')
+    expect(ws.sent).toEqual([])
+  })
+
   it('does not ack when the socket is not open', async () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
-    const onEvent = vi.fn()
+    const onEvent = vi.fn(() => true)
     renderHook(() => useCareEvents(onEvent))
     const ws = MockWebSocket.instances[0]
     ws.readyState = MockWebSocket.CONNECTING

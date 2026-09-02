@@ -33,7 +33,10 @@ function saveOutbox(entries: OutboxEntry[]) {
   localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
 }
 
-export type CareEventHandler = (id: string, type: CareEventType) => void
+// Returns whether the event was actually applied. Acking tells the relay to
+// drop it from a queue *shared with the other device*, so an event we could
+// not apply (no pet yet) must stay unacked and be replayed later.
+export type CareEventHandler = (id: string, type: CareEventType) => boolean
 
 // Mirrors useMessages' reconnect/backoff shape, but for the care-event sync
 // used by the shared-pet feature -- deliberately a separate WebSocket
@@ -114,8 +117,8 @@ export function useCareEvents(onEvent: CareEventHandler) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'care-event' && CARE_EVENT_TYPES.has(data.eventType)) {
-            onEventRef.current(data.id, data.eventType)
-            if (ws.readyState === WebSocket.OPEN) {
+            const applied = onEventRef.current(data.id, data.eventType)
+            if (applied && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ack', id: data.id }))
             }
           }

@@ -73,6 +73,15 @@
   .status { min-height: 1.4em; margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-soft); }
   .status.ok { color: #6fe08a; }
   .status.err { color: #ff5d8f; }
+  .link {
+    width: auto;
+    margin-top: 0.5rem;
+    border: none;
+    padding: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-soft);
+  }
+  .link:hover:not(:disabled) { background: transparent; color: var(--primary); }
 </style>
 </head>
 <body>
@@ -81,28 +90,73 @@
     <textarea id="text" maxlength="500" placeholder="Say something sweet..."></textarea>
     <button id="send">[ SEND ]</button>
     <div id="status" class="status"></div>
+    <button id="reset" class="link">[ change relay ]</button>
   </div>
 
   <script>
-    // Fill these in once, after deploying server/ (see server/README.md).
-    const RELAY_URL = 'https://your-app-name.fly.dev'
-    const RELAY_TOKEN = 'your-relay-token'
+    // The relay URL and token are deliberately NOT written into this file.
+    // sender.html is tracked by git, so a token typed here would be published
+    // by the next commit -- and rotating it later doesn't remove it from
+    // history. They're asked for once and kept in this browser's
+    // localStorage instead; "[ change relay ]" below clears them after a
+    // rotation. See server/README.md.
+    const CONFIG_KEY = 'catmagochi-sender-config-v1'
 
     const textEl = document.getElementById('text')
     const sendEl = document.getElementById('send')
     const statusEl = document.getElementById('status')
+    const resetEl = document.getElementById('reset')
+
+    function loadConfig() {
+      try {
+        const raw = localStorage.getItem(CONFIG_KEY)
+        return raw ? JSON.parse(raw) : null
+      } catch {
+        return null
+      }
+    }
+
+    function askForConfig() {
+      const url = prompt('Relay URL (e.g. https://your-app-name.fly.dev)')
+      if (!url) return null
+      const token = prompt('Relay token')
+      if (!token) return null
+      const config = { url: url.trim().replace(/\/+$/, ''), token: token.trim() }
+      try {
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+      } catch {
+        // Private mode: keep going for this page load, just don't persist.
+      }
+      return config
+    }
+
+    resetEl.addEventListener('click', () => {
+      try {
+        localStorage.removeItem(CONFIG_KEY)
+      } catch {
+        // nothing stored to clear
+      }
+      statusEl.textContent = 'relay settings cleared'
+      statusEl.className = 'status'
+    })
 
     sendEl.addEventListener('click', async () => {
       const text = textEl.value.trim()
       if (!text) return
+      const config = loadConfig() || askForConfig()
+      if (!config) {
+        statusEl.textContent = 'relay URL and token are needed to send'
+        statusEl.className = 'status err'
+        return
+      }
       sendEl.disabled = true
       statusEl.textContent = 'sending...'
       statusEl.className = 'status'
       try {
-        const res = await fetch(`${RELAY_URL}/send`, {
+        const res = await fetch(`${config.url}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: RELAY_TOKEN, text }),
+          body: JSON.stringify({ token: config.token, text }),
         })
         if (!res.ok) throw new Error((await res.json()).error || 'failed')
         textEl.value = ''

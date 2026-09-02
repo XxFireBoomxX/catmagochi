@@ -12,7 +12,12 @@ dist
 dist-ssr
 *.local
 .env
+# Relay data files, written next to server.js whenever DATA_DIR is unset
+# (the documented local-run command). subscriptions.json holds push endpoints
+# and their p256dh/auth keys -- credential-shaped, never commit it.
 server/messages.json
+server/subscriptions.json
+server/care-events.json
 coverage
 
 # Capacitor OTA release asset, built from dist/ and uploaded to the

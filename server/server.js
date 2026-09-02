@@ -26,6 +26,45 @@ if (!RELAY_TOKEN) {
   process.exit(1)
 }
 
+// A push subscription tells this server where to deliver the plaintext of
+// every message, encrypted to keys the subscriber supplies. Storing an
+// arbitrary caller-supplied endpoint would therefore turn the bundled token
+// -- which is only "keeps random strangers out", and ships in the client JS
+// -- into permanent message exfiltration: register your own server as an
+// endpoint and every note is delivered to you, decryptable with your own
+// keys, and never pruned (that only happens on 404/410, which you control).
+// So only real push services are accepted. An entry starting with '.'
+// matches that domain and any subdomain.
+const DEFAULT_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  'updates.push.services.mozilla.com',
+  'web.push.apple.com',
+  '.push.services.mozilla.com',
+  '.notify.windows.com',
+]
+// Extends (never replaces) the built-in list, for a self-hosted push service
+// or a test fixture -- see server/README.md.
+const PUSH_ALLOWED_HOSTS = [
+  ...DEFAULT_PUSH_HOSTS,
+  ...(process.env.PUSH_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean),
+]
+
+function isAllowedPushEndpoint(endpoint) {
+  let url
+  try {
+    url = new URL(endpoint)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:') return false
+  return PUSH_ALLOWED_HOSTS.some((entry) =>
+    entry.startsWith('.') ? url.hostname.endsWith(entry) : url.hostname === entry,
+  )
+}
+
 // Push is optional: subscriptions can still be accepted/stored without VAPID
 // keys configured (so client/server rollout order doesn't matter), but no
 // actual push is ever sent until both are set.
@@ -167,7 +206,11 @@ const server = createServer((req, res) => {
         pending.push(message)
         persist()
         broadcastRecord('message', message)
-        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed })
+        // A per-message tag, so two notes stack instead of the second
+        // silently replacing the first (showNotification with an existing
+        // tag REPLACES it, and renotify defaults to false -- no second
+        // buzz). update/attention keep coalescing by type on purpose.
+        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed, tag: `message-${message.id}` })
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, id: message.id }))
       } catch {
@@ -190,6 +233,11 @@ const server = createServer((req, res) => {
         if (!subscription?.endpoint || !subscription.keys) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid subscription' }))
+          return
+        }
+        if (!isAllowedPushEndpoint(subscription.endpoint)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unsupported push endpoint' }))
           return
         }
         subscriptions = subscriptions.filter((s) => s.subscription.endpoint !== subscription.endpoint)

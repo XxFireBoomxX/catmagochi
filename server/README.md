@@ -46,13 +46,22 @@ and rebuild (`npm run build`) so the new values are baked into the bundle.
 
 ## Rotating the token
 
-`fly secrets set RELAY_TOKEN=<new-value>` on the server, then update `VITE_RELAY_TOKEN` everywhere that has it (the app's `.env` + rebuild, and `sender.html`) and redeploy/reopen both. Anyone with the old token loses access immediately since the server stops accepting it.
+`fly secrets set RELAY_TOKEN=<new-value>` on the server, then:
+
+- **The app**: update `VITE_RELAY_TOKEN` in the repo-root `.env` (gitignored) and rebuild — Vite bakes it into the bundle at build time.
+- **`sender.html`**: open it and press `[ change relay ]`, then send once; it re-prompts for the URL and token and keeps them in that browser's `localStorage`.
+
+Anyone with the old token loses access immediately, since the server stops accepting it.
+
+> **Never type the token into `sender.html` itself.** That file is tracked by git, so the next commit publishes the live secret, and a later rotation doesn't remove it from history. It deliberately holds no credentials — it asks for them on first send. This is the same class of mistake the release checklist guards against with its "move `.env` aside before building `bundle.zip`" step (see `CLAUDE.md`).
 
 ## Push notifications (optional)
 
 The relay can also send real Web Push notifications — "new message" and "update available" both go through the *same* subscription/relay infra as messaging; only "cat needs attention" is local-only (the server has no visibility into pet stats, which live in the app's `localStorage`, so it can't push that one — see `useAttentionNotifications` client-side).
 
 Push is entirely optional and additive: without VAPID keys configured, `/push/subscribe` still accepts and stores subscriptions (so client/server rollout order doesn't matter), it just never actually sends anything.
+
+`/push/subscribe` only accepts endpoints on the real push services (FCM, Mozilla, Apple, Windows Notification Service). This matters more than it looks: a subscription is an instruction to deliver the plaintext of every message somewhere, encrypted to keys the subscriber supplies. Since the token ships in the client bundle, without a host check anyone who read it could register their own server as an endpoint and quietly receive every note from then on — and it would never be pruned, because pruning only happens on a 404/410 they control. Set `PUSH_ALLOWED_HOSTS` (comma-separated) to *extend* the built-in list if you ever self-host a push service; it never replaces it. An entry starting with `.` matches that domain and any subdomain.
 
 Generate a keypair once:
 

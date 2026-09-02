@@ -36,7 +36,15 @@ describe('catmagochi relay server', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-test-'))
     child = spawn(process.execPath, ['server.js'], {
       cwd: __dirname,
-      env: { ...process.env, PORT: String(PORT), RELAY_TOKEN: TOKEN, DATA_DIR: dataDir },
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        RELAY_TOKEN: TOKEN,
+        DATA_DIR: dataDir,
+        // The fixtures below use a fake push host; PUSH_ALLOWED_HOSTS extends
+        // the built-in list of real push services rather than replacing it.
+        PUSH_ALLOWED_HOSTS: 'push.example.test',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     await waitForServer(BASE)
@@ -505,6 +513,56 @@ describe('catmagochi relay server', () => {
     assert.equal(res.status, 401)
   })
 
+  // Without a host check, anyone who reads the token out of the client bundle
+  // can register a subscription pointing at their own server, with their own
+  // keys -- and from then on every private message is delivered to them in
+  // plaintext, forever (pruning only happens on 404/410, which they control).
+  test('POST /push/subscribe rejects an endpoint that is not a known push service', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint: 'https://attacker.example.com/collect', keys: { p256dh: 'k', auth: 'a' } },
+      }),
+    })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error, 'unsupported push endpoint')
+  })
+
+  test('POST /push/subscribe rejects a non-https endpoint', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint: 'http://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'k', auth: 'a' } },
+      }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('POST /push/subscribe accepts the real push services out of the box', async () => {
+    for (const endpoint of [
+      'https://fcm.googleapis.com/fcm/send/abc123',
+      'https://updates.push.services.mozilla.com/wpush/v2/abc123',
+      'https://web.push.apple.com/abc123',
+      'https://db5p.notify.windows.com/w/?token=abc123',
+    ]) {
+      const res = await fetch(`${BASE}/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } } })  ,
+      })
+      assert.equal(res.status, 200, `expected ${endpoint} to be accepted`)
+      await fetch(`${BASE}/push/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, endpoint }),
+      })
+    }
+  })
+
   test('POST /push/subscribe rejects a malformed subscription', async () => {
     const res = await fetch(`${BASE}/push/subscribe`, {
       method: 'POST',
@@ -612,6 +670,9 @@ describe('catmagochi relay server with push enabled', () => {
         DATA_DIR: dataDir,
         VAPID_PUBLIC_KEY: vapidKeys.publicKey,
         VAPID_PRIVATE_KEY: vapidKeys.privateKey,
+        // Same fake push host as the main suite -- extends, not replaces, the
+        // built-in allowlist of real push services.
+        PUSH_ALLOWED_HOSTS: 'push.example.test',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

@@ -155,6 +155,33 @@ describe('usePet', () => {
     expect(result.current.save).toBeNull()
   })
 
+  // Parseable JSON that isn't a save used to reach applyElapsed() and throw
+  // on stats.fullness, leaving a blank screen with no in-app way back.
+  it.each(['null', '123', '"a string"', '[]', '{}', '{"name":"NoStats"}'])(
+    'starts fresh instead of throwing on the structurally invalid save %s',
+    (raw) => {
+      localStorage.setItem(SAVE_KEY, raw)
+      const { result } = renderHook(() => usePet())
+      expect(result.current.save).toBeNull()
+    },
+  )
+
+  it('starts fresh when stats are present but not numbers', () => {
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({ name: 'Bad', stats: { fullness: 'lots' }, sleeping: false, lastUpdate: Date.now() }),
+    )
+    const { result } = renderHook(() => usePet())
+    expect(result.current.save).toBeNull()
+  })
+
+  it('recovers a save that is otherwise valid but missing lastUpdate', () => {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ name: 'Mochi', stats: baseStats, sleeping: false }))
+    const { result } = renderHook(() => usePet())
+    expect(result.current.save?.name).toBe('Mochi')
+    expect(result.current.save?.stats.fullness).toBe(baseStats.fullness)
+  })
+
   it('catches up stats for elapsed time since lastUpdate on load, awake decay', () => {
     const tenMinutesAgo = Date.now() - 10 * 60_000
     localStorage.setItem(
@@ -530,12 +557,31 @@ describe('usePet', () => {
       expect(result.current.save?.totalPets).toBe(1)
     })
 
-    it('is a no-op when there is no save yet', () => {
+    // Reports false so useCareEvents leaves the event unacked and the relay
+    // replays it once a pet actually exists -- otherwise a partner's queued
+    // actions are silently destroyed while the name screen is up.
+    it('reports not-applied and leaves nothing behind when there is no save yet', () => {
+      const { result } = renderHook(() => usePet())
+      let applied: boolean | undefined
+      act(() => {
+        applied = result.current.applyRemoteEvent('evt-nosave', 'feed')
+      })
+      expect(applied).toBe(false)
+      expect(result.current.save).toBeNull()
+    })
+
+    it('does not swallow the id of an event it could not apply', () => {
       const { result } = renderHook(() => usePet())
       act(() => {
-        result.current.applyRemoteEvent('evt-nosave', 'feed')
+        result.current.applyRemoteEvent('evt-later', 'feed')
       })
-      expect(result.current.save).toBeNull()
+      act(() => result.current.createPet('Mochi'))
+      let applied: boolean | undefined
+      act(() => {
+        applied = result.current.applyRemoteEvent('evt-later', 'feed')
+      })
+      expect(applied).toBe(true)
+      expect(result.current.save?.totalFeeds).toBe(1)
     })
 
     it('covers every synced care event type', () => {

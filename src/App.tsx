@@ -69,7 +69,10 @@ function App() {
   // creates the WebSocket connection) without a chicken-and-egg ordering
   // problem -- see the assignment right before the early return below,
   // which mirrors the saveRef-updated-every-render pattern in usePet.ts.
-  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType) => void>(() => {})
+  // Defaults to reporting not-applied: until the assignment below runs (it
+  // sits after the boot-splash / name-screen early returns), there is nothing
+  // to apply an event to, and useCareEvents must not ack it off the relay.
+  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType) => boolean>(() => false)
   const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage, applyRemoteEvent } = usePet(
     (id, type) => careEvents.emit(id, type),
   )
@@ -185,10 +188,11 @@ function App() {
   // replayed after reconnect, which should stay silent.
   handleRemoteCareEventRef.current = (id, type) => {
     const applied = applyRemoteEvent(id, type)
-    if (!applied) return
+    if (!applied) return false
     for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
     if (type === 'feed' || type === 'clean' || type === 'play') triggerCue(type)
     if (type !== 'play') maybeShowActionFlavor(type)
+    return true
   }
 
   const handlePetClick = () => {
