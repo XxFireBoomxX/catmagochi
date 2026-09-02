@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StartScreen } from './components/StartScreen'
 import { AsciiCat } from './components/AsciiCat'
 import { TrickPanel } from './components/TrickPanel'
@@ -14,6 +14,7 @@ import { useCareEvents } from './hooks/useCareEvents'
 import { useNotificationSettings } from './hooks/useNotificationSettings'
 import { usePushSubscription } from './hooks/usePushSubscription'
 import { useAttentionNotifications } from './hooks/useAttentionNotifications'
+import { useTricks } from './hooks/useTricks'
 import { deriveStage, growthProgress, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
 import { ACTION_FLAVOR } from './data/flavorText'
 import type { ActionCueType, CareEventType, PetStats, RelayMessage, Stage } from './types'
@@ -96,7 +97,17 @@ function App() {
   const [captionPop, setCaptionPop] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
   const actionFlavorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const captionKey = useRef(0)
-  const flavorText = useFlavorText(mood)
+  // Tricks she already knows become idle flavour, so she performs one now and
+  // then without being asked. Memoised on the ids so the flavour loop isn't
+  // restarted by a fresh array every render.
+  const { learnedTricks } = useTricks()
+  const learnedTrickIds = learnedTricks.map((t) => t.id).join(',')
+  const trickFlavor = useMemo(
+    () => learnedTricks.map((t) => `practices ${t.name}`),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [learnedTrickIds],
+  )
+  const flavorText = useFlavorText(mood, trickFlavor)
   const prevStage = useRef<Stage | null>(null)
   const stage = save ? deriveStage(save.growth) : null
   const captionText = save ? `${save.name} ${actionFlavor ?? flavorText}` : null

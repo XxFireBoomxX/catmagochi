@@ -78,3 +78,72 @@ describe('useFlavorText', () => {
     }).not.toThrow()
   })
 })
+
+describe('useFlavorText with extra lines', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // The hook calls Math.random three times per idle tick: the jittered delay,
+  // the show-a-line chance, then the pick. Only the third one selects.
+  function stubRolls(pick: number) {
+    vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0) // no jitter -> fires at IDLE_CHECK_MIN_MS
+      .mockReturnValueOnce(0) // below FLAVOR_CHANCE -> show a line
+      .mockReturnValueOnce(pick)
+  }
+
+  // Learned tricks join the idle pool, so the cat occasionally performs one
+  // unprompted -- the payoff shows up even when nobody asked.
+  it('can draw an idle line from the extra pool it is given', () => {
+    const extra = ['practices her high five']
+    // 'content' has no mood pool, so it falls back to GENERIC_FLAVOR; the
+    // extras are appended, so the last index is ours.
+    const poolSize = GENERIC_FLAVOR.length + extra.length
+    stubRolls((poolSize - 1) / poolSize + 0.001)
+    const { result } = renderHook(() => useFlavorText('content', extra))
+    act(() => {
+      vi.advanceTimersByTime(6_000)
+    })
+    expect(result.current).toBe('practices her high five')
+  })
+
+  it("still draws the mood's own lines when the pick lands there", () => {
+    stubRolls(0)
+    const { result } = renderHook(() => useFlavorText('content', ['practices her high five']))
+    act(() => {
+      vi.advanceTimersByTime(6_000)
+    })
+    expect(GENERIC_FLAVOR).toContain(result.current)
+  })
+
+  it('is unchanged when no extra pool is given', () => {
+    stubRolls(0)
+    const { result } = renderHook(() => useFlavorText('happy'))
+    act(() => {
+      vi.advanceTimersByTime(6_000)
+    })
+    expect(FLAVOR_TEXT.happy).toContain(result.current)
+  })
+
+  // App builds this array during render, so a fresh array of the same lines
+  // must not restart the loop and blank the caption mid-display.
+  it('does not restart the loop when an equivalent pool is passed again', () => {
+    const extra = ['practices her high five']
+    const poolSize = GENERIC_FLAVOR.length + extra.length
+    stubRolls((poolSize - 1) / poolSize + 0.001)
+    const { result, rerender } = renderHook(({ lines }) => useFlavorText('content', lines), {
+      initialProps: { lines: [...extra] },
+    })
+    act(() => {
+      vi.advanceTimersByTime(6_000)
+    })
+    expect(result.current).toBe('practices her high five')
+    rerender({ lines: [...extra] })
+    expect(result.current).toBe('practices her high five')
+  })
+})
