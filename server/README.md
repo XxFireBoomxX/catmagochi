@@ -61,6 +61,8 @@ The relay can also send real Web Push notifications — "new message" and "updat
 
 Push is entirely optional and additive: without VAPID keys configured, `/push/subscribe` still accepts and stores subscriptions (so client/server rollout order doesn't matter), it just never actually sends anything.
 
+`/push/subscribe` takes the same optional `device` id the WebSocket sends, and a push is never delivered to the device the notification is about — otherwise sending a nudge buzzes your own phone with a note the app has (correctly) already suppressed on screen.
+
 `/push/subscribe` only accepts endpoints on the real push services (FCM, Mozilla, Apple, Windows Notification Service). This matters more than it looks: a subscription is an instruction to deliver the plaintext of every message somewhere, encrypted to keys the subscriber supplies. Since the token ships in the client bundle, without a host check anyone who read it could register their own server as an endpoint and quietly receive every note from then on — and it would never be pruned, because pruning only happens on a 404/410 they control. Set `PUSH_ALLOWED_HOSTS` (comma-separated) to *extend* the built-in list if you ever self-host a push service; it never replaces it. An entry starting with `.` matches that domain and any subdomain.
 
 Generate a keypair once:
