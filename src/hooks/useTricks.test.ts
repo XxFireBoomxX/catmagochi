@@ -70,11 +70,11 @@ describe('useTricks', () => {
   it('learns the trick once the points are earned and moves to the next', () => {
     seed({ currentTrickId: TRICKS[0].id, progress: TRICK_POINTS - 1, learned: [], lastLessonDay: null })
     const { result } = renderHook(() => useTricks())
-    let learned: { id: string } | null = null
+    let learned: ReturnType<typeof result.current.recordLesson>
     act(() => {
       learned = result.current.recordLesson('almost')
     })
-    expect(learned?.id).toBe(TRICKS[0].id)
+    expect(learned!.id).toBe(TRICKS[0].id)
     expect(result.current.learnedTricks.map((t) => t.id)).toEqual([TRICKS[0].id])
     expect(result.current.currentTrick?.id).toBe(TRICKS[1].id)
     expect(result.current.progress).toBe(0)

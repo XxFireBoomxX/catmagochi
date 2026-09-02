@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { StartScreen } from './components/StartScreen'
 import { AsciiCat } from './components/AsciiCat'
-import { NudgePicker } from './components/NudgePicker'
+import { TrickPanel } from './components/TrickPanel'
 import { MessageView } from './components/MessageView'
 import { Menu } from './components/Menu'
 import { StatsWindow } from './components/StatsWindow'
@@ -21,7 +21,6 @@ import './App.css'
 
 const ACTION_FLAVOR_CHANCE = 0.25
 const ACTION_FLAVOR_MS = 2500
-const SEND_STATUS_MS = 2500
 const NOTIFICATION_PROMPT_SEEN_KEY = 'catmagochi-notification-prompt-seen-v1'
 const START_SEEN_KEY = 'catmagochi-start-seen-v1'
 
@@ -77,7 +76,7 @@ function App() {
     (id, type) => careEvents.emit(id, type),
   )
   const careEvents = useCareEvents((id, type) => handleRemoteCareEventRef.current(id, type))
-  const { messages, dismiss, send } = useMessages()
+  const { messages, dismiss } = useMessages()
   const { history, record } = useMessageHistory()
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
   const { status: pushStatus } = usePushSubscription(notificationSettings)
@@ -95,11 +94,8 @@ function App() {
   const [actionCue, setActionCue] = useState<{ type: ActionCueType } | null>(null)
   const [actionFlavor, setActionFlavor] = useState<string | null>(null)
   const [captionPop, setCaptionPop] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
-  const [sendStatusCaption, setSendStatusCaption] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
   const actionFlavorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const sendStatusTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const captionKey = useRef(0)
-  const sendStatusKey = useRef(0)
   const flavorText = useFlavorText(mood)
   const prevStage = useRef<Stage | null>(null)
   const stage = save ? deriveStage(save.growth) : null
@@ -108,7 +104,6 @@ function App() {
   useEffect(() => {
     return () => {
       clearTimeout(actionFlavorTimer.current)
-      clearTimeout(sendStatusTimer.current)
     }
   }, [])
 
@@ -214,27 +209,19 @@ function App() {
     return applied
   }
 
-  const showSendStatus = (text: string) => {
-    sendStatusKey.current += 1
-    setSendStatusCaption({
-      text,
-      top: 10 + Math.random() * 35,
-      left: 15 + Math.random() * 60,
-      key: sendStatusKey.current,
-    })
-    clearTimeout(sendStatusTimer.current)
-    sendStatusTimer.current = setTimeout(() => setSendStatusCaption(null), SEND_STATUS_MS)
-  }
-
-  const handleSendNudge = async (text: string) => {
+  // One lesson a day. Any outcome still counts as time spent with the cat,
+  // so it fires the same 'play' care event the nudge used to -- stats and
+  // growth are unchanged, and it still syncs if a relay is ever deployed.
+  const handleLessonDone = () => {
     playGame()
     pulseFor('play')
     triggerCue('play')
-    setPlayPickerOpen(false)
-    const status = await send(text, 'nudge')
-    if (status === 'sent') showSendStatus('Sent.')
-    else if (status === 'queued') showSendStatus('Saved — will send when back online.')
-    // 'unconfigured' -- no caption, this is normal standalone/solo use
+  }
+
+  // Performing a learned trick is unlimited, so it deliberately changes no
+  // stats -- it's an expressive toy, not a second faucet to optimise.
+  const handlePerformTrick = () => {
+    triggerCue('play')
   }
 
   const handleDismissMessage = (message: RelayMessage) => {
@@ -313,17 +300,6 @@ function App() {
         </div>
       )}
 
-      {sendStatusCaption && (
-        <div
-          key={sendStatusCaption.key}
-          className="floating-caption"
-          style={{ top: `${sendStatusCaption.top}%`, left: `${sendStatusCaption.left}%` }}
-          aria-live="polite"
-        >
-          {sendStatusCaption.text}
-        </div>
-      )}
-
       {growBanner && <div className="grow-banner">{growBanner}</div>}
 
       {showNotificationPrompt && !notificationSettings.global && (
@@ -337,7 +313,12 @@ function App() {
       )}
 
       {playPickerOpen ? (
-        <NudgePicker onSend={handleSendNudge} onCancel={() => setPlayPickerOpen(false)} />
+        <TrickPanel
+          name={save.name}
+          onLessonDone={handleLessonDone}
+          onPerform={handlePerformTrick}
+          onClose={() => setPlayPickerOpen(false)}
+        />
       ) : messages.length > 0 ? (
         <MessageView message={messages[0]} onDismiss={() => handleDismissMessage(messages[0])} />
       ) : (
