@@ -163,6 +163,12 @@ export function lessonMoodForDay(dayKey: string): LessonMood {
   return LESSON_MOODS[hash % LESSON_MOODS.length]
 }
 
+// Fills {name} and {trick} in a line. Kept here rather than inline in the
+// panel so tests can build the exact string a line renders to.
+export function fillLine(line: string, vars: { name: string; trick: string }): string {
+  return line.replaceAll('{name}', vars.name).replaceAll('{trick}', vars.trick)
+}
+
 // `roll` is a number in [0, 1) supplied by the caller rather than read from
 // Math.random() here, so the odds table can be tested without stubbing a
 // global -- and so a single lesson's roll is visible at its call site.
