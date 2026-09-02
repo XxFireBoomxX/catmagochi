@@ -15,6 +15,9 @@ interface PushPayload {
   type: string
   title?: string
   body?: string
+  // Distinct per message so consecutive notes stack and each one alerts;
+  // absent for update/attention, which coalesce by type deliberately.
+  tag?: string
 }
 
 self.addEventListener('push', (event) => {
@@ -25,15 +28,22 @@ self.addEventListener('push', (event) => {
     // ignore malformed push payloads
   }
 
-  event.waitUntil(
-    self.registration.showNotification(payload.title ?? 'Catmagochi', {
-      body: payload.body,
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
-      tag: payload.type,
-      data: payload,
-    }),
-  )
+  // `renotify` is a Service Worker notification option: TypeScript's DOM lib
+  // only types the Notification constructor's narrower subset, so it isn't on
+  // NotificationOptions. It's valid here, and requires `tag` -- which is
+  // always set below.
+  const options: NotificationOptions & { renotify?: boolean } = {
+    body: payload.body,
+    icon: '/favicon.svg',
+    badge: '/favicon.svg',
+    tag: payload.tag ?? payload.type,
+    // Only meaningful when a tag repeats (update/attention): re-alert rather
+    // than swapping the text in silently.
+    renotify: true,
+    data: payload,
+  }
+
+  event.waitUntil(self.registration.showNotification(payload.title ?? 'Catmagochi', options))
 })
 
 self.addEventListener('notificationclick', (event) => {

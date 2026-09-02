@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Menu } from './Menu'
 import type { RelayMessage } from '../types'
@@ -99,6 +100,53 @@ describe('Menu', () => {
     const { onClose } = setup()
     fireEvent.click(screen.getByText('[ CLOSE ]'))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // The overlay covers the card but the page underneath stayed reachable by
+  // keyboard: Tab walked straight out of the panel onto FEED/PLAY/CLEAN and
+  // Enter fired them through a menu you can't see past.
+  describe('dialog behaviour', () => {
+    it('exposes itself as a modal dialog', () => {
+      setup()
+      const dialog = screen.getByRole('dialog')
+      expect(dialog).toHaveAttribute('aria-modal', 'true')
+      expect(dialog).toHaveAccessibleName('MENU')
+    })
+
+    it('moves focus into the panel when it opens', () => {
+      setup()
+      expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
+    })
+
+    it('closes on Escape', () => {
+      const { onClose } = setup()
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('wraps Tab from the last control back to the first', async () => {
+      const user = userEvent.setup()
+      setup()
+      const controls = within(screen.getByRole('dialog')).getAllByRole('button')
+      controls[controls.length - 1].focus()
+      await user.tab()
+      expect(document.activeElement).toBe(controls[0])
+    })
+
+    it('wraps Shift+Tab from the first control back to the last', async () => {
+      const user = userEvent.setup()
+      setup()
+      const controls = within(screen.getByRole('dialog')).getAllByRole('button')
+      controls[0].focus()
+      await user.tab({ shift: true })
+      expect(document.activeElement).toBe(controls[controls.length - 1])
+    })
+
+    it('moves focus into the new view when switching away from root', () => {
+      setup()
+      fireEvent.click(screen.getByText('MESSAGE HISTORY'))
+      expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
+    })
   })
 
   describe('history view', () => {

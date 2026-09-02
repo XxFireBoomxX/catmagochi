@@ -155,6 +155,33 @@ describe('usePet', () => {
     expect(result.current.save).toBeNull()
   })
 
+  // Parseable JSON that isn't a save used to reach applyElapsed() and throw
+  // on stats.fullness, leaving a blank screen with no in-app way back.
+  it.each(['null', '123', '"a string"', '[]', '{}', '{"name":"NoStats"}'])(
+    'starts fresh instead of throwing on the structurally invalid save %s',
+    (raw) => {
+      localStorage.setItem(SAVE_KEY, raw)
+      const { result } = renderHook(() => usePet())
+      expect(result.current.save).toBeNull()
+    },
+  )
+
+  it('starts fresh when stats are present but not numbers', () => {
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({ name: 'Bad', stats: { fullness: 'lots' }, sleeping: false, lastUpdate: Date.now() }),
+    )
+    const { result } = renderHook(() => usePet())
+    expect(result.current.save).toBeNull()
+  })
+
+  it('recovers a save that is otherwise valid but missing lastUpdate', () => {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ name: 'Mochi', stats: baseStats, sleeping: false }))
+    const { result } = renderHook(() => usePet())
+    expect(result.current.save?.name).toBe('Mochi')
+    expect(result.current.save?.stats.fullness).toBe(baseStats.fullness)
+  })
+
   it('catches up stats for elapsed time since lastUpdate on load, awake decay', () => {
     const tenMinutesAgo = Date.now() - 10 * 60_000
     localStorage.setItem(
@@ -495,11 +522,11 @@ describe('usePet', () => {
         result.current.applyRemoteEvent('evt-dup', 'clean')
       })
       expect(result.current.save?.growth).toBe(2)
-      let secondResult: boolean | undefined
+      let secondResult: string | undefined
       act(() => {
         secondResult = result.current.applyRemoteEvent('evt-dup', 'clean')
       })
-      expect(secondResult).toBe(false)
+      expect(secondResult).toBe('duplicate')
       expect(result.current.save?.growth).toBe(2)
     })
 
@@ -511,11 +538,11 @@ describe('usePet', () => {
       const emittedId = onCareEvent.mock.calls[0][0] as string
       expect(result.current.save?.growth).toBe(3)
 
-      let echoApplied: boolean | undefined
+      let echoApplied: string | undefined
       act(() => {
         echoApplied = result.current.applyRemoteEvent(emittedId, 'feed')
       })
-      expect(echoApplied).toBe(false)
+      expect(echoApplied).toBe('duplicate')
       expect(result.current.save?.growth).toBe(3)
     })
 
@@ -530,12 +557,53 @@ describe('usePet', () => {
       expect(result.current.save?.totalPets).toBe(1)
     })
 
-    it('is a no-op when there is no save yet', () => {
+    // "Already applied" and "cannot apply yet" both mean "don't re-run the
+    // deltas", but they mean opposite things to the relay: a duplicate is
+    // dealt with and must be acked away, while an event that arrived before
+    // there was a pet must stay queued. Collapsing both to false left a
+    // redelivered event unackable, so it replayed on every reconnect forever.
+    it('distinguishes a duplicate from an event it could not apply', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Remote'))
+      let first: string | undefined
+      let second: string | undefined
+      act(() => {
+        first = result.current.applyRemoteEvent('evt-once', 'clean')
+      })
+      act(() => {
+        second = result.current.applyRemoteEvent('evt-once', 'clean')
+      })
+      expect(first).toBe('applied')
+      expect(second).toBe('duplicate')
+      // applied exactly once regardless
+      expect(result.current.save?.growth).toBe(2)
+    })
+
+    // Reports 'no-pet' so useCareEvents leaves the event unacked and the relay
+    // replays it once a pet actually exists -- otherwise a partner's queued
+    // actions are silently destroyed while the name screen is up.
+    it('reports not-applied and leaves nothing behind when there is no save yet', () => {
+      const { result } = renderHook(() => usePet())
+      let applied: string | undefined
+      act(() => {
+        applied = result.current.applyRemoteEvent('evt-nosave', 'feed')
+      })
+      expect(applied).toBe('no-pet')
+      expect(result.current.save).toBeNull()
+    })
+
+    it('does not swallow the id of an event it could not apply', () => {
       const { result } = renderHook(() => usePet())
       act(() => {
-        result.current.applyRemoteEvent('evt-nosave', 'feed')
+        result.current.applyRemoteEvent('evt-later', 'feed')
       })
-      expect(result.current.save).toBeNull()
+      act(() => result.current.createPet('Mochi'))
+      let applied: string | undefined
+      act(() => {
+        applied = result.current.applyRemoteEvent('evt-later', 'feed')
+      })
+      expect(applied).toBe('applied')
+      expect(result.current.save?.totalFeeds).toBe(1)
     })
 
     it('covers every synced care event type', () => {

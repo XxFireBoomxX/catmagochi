@@ -1,8 +1,9 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { WebSocketServer } from 'ws'
 import webpush from 'web-push'
+import { shouldPushTo } from './pushTargets.js'
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8080
 const RELAY_TOKEN = process.env.RELAY_TOKEN
@@ -26,6 +27,48 @@ if (!RELAY_TOKEN) {
   process.exit(1)
 }
 
+// A push subscription tells this server where to deliver the plaintext of
+// every message, encrypted to keys the subscriber supplies. Storing an
+// arbitrary caller-supplied endpoint would therefore turn the bundled token
+// -- which is only "keeps random strangers out", and ships in the client JS
+// -- into permanent message exfiltration: register your own server as an
+// endpoint and every note is delivered to you, decryptable with your own
+// keys, and never pruned (that only happens on 404/410, which you control).
+// So only real push services are accepted. An entry starting with '.'
+// matches that domain and any subdomain.
+const DEFAULT_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  // Pre-FCM GCM endpoint, still emitted by older Chrome and some Android
+  // WebView/Chromium forks.
+  'android.googleapis.com',
+  'web.push.apple.com',
+  // Covers updates.push.services.mozilla.com and its siblings.
+  '.push.services.mozilla.com',
+  '.notify.windows.com',
+]
+// Extends (never replaces) the built-in list, for a self-hosted push service
+// or a test fixture -- see server/README.md.
+const PUSH_ALLOWED_HOSTS = [
+  ...DEFAULT_PUSH_HOSTS,
+  ...(process.env.PUSH_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean),
+]
+
+function isAllowedPushEndpoint(endpoint) {
+  let url
+  try {
+    url = new URL(endpoint)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:') return false
+  return PUSH_ALLOWED_HOSTS.some((entry) =>
+    entry.startsWith('.') ? url.hostname.endsWith(entry) : url.hostname === entry,
+  )
+}
+
 // Push is optional: subscriptions can still be accepted/stored without VAPID
 // keys configured (so client/server rollout order doesn't matter), but no
 // actual push is ever sent until both are set.
@@ -36,55 +79,65 @@ if (PUSH_ENABLED) {
   webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 }
 
-let pending = []
-if (existsSync(MESSAGES_FILE)) {
-  try {
-    pending = JSON.parse(readFileSync(MESSAGES_FILE, 'utf-8'))
-  } catch {
-    pending = []
-  }
+// writeFileSync truncates the target before writing it, so a crash, OOM or
+// redeploy midway through leaves half-written JSON on the volume -- and the
+// loader below then reads it as an empty queue. Writing to a sibling temp
+// file and renaming makes the swap atomic on the same filesystem: readers
+// see either the old file or the new one, never a partial one. Note this is
+// atomicity, not durability -- there's no fsync before the rename, so a
+// *power* loss can still land the rename ahead of the data. That covers the
+// reported failure (crash / OOM / redeploy mid-write) and stops well short
+// of what a database would give you.
+function writeJsonAtomic(file, value) {
+  const tmp = new URL(`${file.href}.tmp`)
+  writeFileSync(tmp, JSON.stringify(value, null, 2))
+  renameSync(tmp, file)
 }
+
+// Starting empty is the right recovery, but doing it silently makes a total
+// loss of the queue look identical to a healthy boot. Say so on stderr.
+function readJsonArray(file, label) {
+  if (!existsSync(file)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8'))
+    if (Array.isArray(parsed)) return parsed
+    console.error(`${label} at ${file.href} is not an array; starting empty`)
+  } catch (err) {
+    console.error(`could not read ${label} at ${file.href}; starting empty:`, err.message)
+  }
+  return []
+}
+
+let pending = readJsonArray(MESSAGES_FILE, 'pending messages')
 
 function persist() {
-  writeFileSync(MESSAGES_FILE, JSON.stringify(pending, null, 2))
+  writeJsonAtomic(MESSAGES_FILE, pending)
 }
 
-let subscriptions = []
-if (existsSync(SUBSCRIPTIONS_FILE)) {
-  try {
-    subscriptions = JSON.parse(readFileSync(SUBSCRIPTIONS_FILE, 'utf-8'))
-  } catch {
-    subscriptions = []
-  }
-}
+let subscriptions = readJsonArray(SUBSCRIPTIONS_FILE, 'push subscriptions')
 
 function persistSubscriptions() {
-  writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptions, null, 2))
+  writeJsonAtomic(SUBSCRIPTIONS_FILE, subscriptions)
 }
 
 // Care events (feed/clean/pet/play) for the shared-pet sync -- same
 // queue-and-replay shape as `pending` messages above, kept as a fully
 // separate store since they're a different domain (game-state deltas, not
 // chat notes) even though the transport mechanics are identical.
-let pendingEvents = []
-if (existsSync(EVENTS_FILE)) {
-  try {
-    pendingEvents = JSON.parse(readFileSync(EVENTS_FILE, 'utf-8'))
-  } catch {
-    pendingEvents = []
-  }
-}
+let pendingEvents = readJsonArray(EVENTS_FILE, 'pending care events')
 
 function persistEvents() {
-  writeFileSync(EVENTS_FILE, JSON.stringify(pendingEvents, null, 2))
+  writeJsonAtomic(EVENTS_FILE, pendingEvents)
 }
 
-// Sends a push to every subscriber who hasn't opted out of `type`. Prunes
+// Sends a push to every subscriber shouldPushTo() accepts -- which excludes
+// the device the notification is *about*, so you aren't notified of the note
+// you just sent. Prunes
 // subscriptions the push service reports as gone (404/410 -- uninstalled,
 // permission revoked, etc.) rather than retrying them forever.
-async function pushToSubscribers(type, payload) {
+async function pushToSubscribers(type, payload, originDevice = null) {
   if (!PUSH_ENABLED) return
-  const targets = subscriptions.filter((s) => s.types?.[type] !== false)
+  const targets = subscriptions.filter((s) => shouldPushTo(s, type, originDevice))
   const body = JSON.stringify({ type, ...payload })
   const stale = []
   await Promise.all(
@@ -136,7 +189,7 @@ const server = createServer((req, res) => {
     req.on('end', () => {
       setCors(res)
       try {
-        const { token, text, kind, id } = JSON.parse(body)
+        const { token, text, kind, id, origin } = JSON.parse(body)
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -153,6 +206,8 @@ const server = createServer((req, res) => {
           text: trimmed,
           sentAt: Date.now(),
           kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
+          // Absent for sender.html, which has no WebSocket to be echoed to.
+          origin: typeof origin === 'string' && origin ? origin : undefined,
         }
         // No id-dedup on push -- a client-retried id (see useMessages.ts's
         // outbox) becomes a second pending entry here even if the first
@@ -164,8 +219,12 @@ const server = createServer((req, res) => {
         // personal-scale relay.
         pending.push(message)
         persist()
-        broadcast(message)
-        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed })
+        broadcastRecord('message', message)
+        // A per-message tag, so two notes stack instead of the second
+        // silently replacing the first (showNotification with an existing
+        // tag REPLACES it, and renotify defaults to false -- no second
+        // buzz). update/attention keep coalescing by type on purpose.
+        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed, tag: `message-${message.id}` }, message.origin)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, id: message.id }))
       } catch {
@@ -179,7 +238,7 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/push/subscribe') {
     setCors(res)
     readJsonBody(req).then(
-      ({ token, subscription, types }) => {
+      ({ token, subscription, types, device }) => {
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -190,8 +249,19 @@ const server = createServer((req, res) => {
           res.end(JSON.stringify({ error: 'invalid subscription' }))
           return
         }
+        if (!isAllowedPushEndpoint(subscription.endpoint)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unsupported push endpoint' }))
+          return
+        }
         subscriptions = subscriptions.filter((s) => s.subscription.endpoint !== subscription.endpoint)
-        subscriptions.push({ subscription, types: types && typeof types === 'object' ? types : {} })
+        subscriptions.push({
+          subscription,
+          types: types && typeof types === 'object' ? types : {},
+          // Absent for a client from before device ids; such a subscriber
+          // simply never matches an origin and keeps receiving everything.
+          device: typeof device === 'string' && device ? device : undefined,
+        })
         persistSubscriptions()
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, pushEnabled: PUSH_ENABLED }))
@@ -258,7 +328,7 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/care-event') {
     setCors(res)
     readJsonBody(req).then(
-      ({ token, id, type }) => {
+      ({ token, id, type, origin }) => {
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -273,10 +343,11 @@ const server = createServer((req, res) => {
           id,
           eventType: type,
           sentAt: Date.now(),
+          origin: typeof origin === 'string' && origin ? origin : undefined,
         }
         pendingEvents.push(event)
         persistEvents()
-        broadcastEvent(event)
+        broadcastRecord('care-event', event)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true }))
       },
@@ -294,17 +365,30 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true })
 
-function broadcast(message) {
-  const frame = JSON.stringify({ type: 'message', ...message })
-  for (const client of wss.clients) {
-    if (client.readyState === client.OPEN) client.send(frame)
-  }
+// `origin` is delivery bookkeeping, not part of the wire contract -- clients
+// tag what they send so we can route it, but never see the field come back.
+function frameFor(type, record) {
+  const rest = { ...record }
+  delete rest.origin
+  return JSON.stringify({ type, ...rest })
 }
 
-function broadcastEvent(event) {
-  const frame = JSON.stringify({ type: 'care-event', ...event })
+// A device never receives what it sent itself. It already applied the action
+// locally, and because `pending`/`pendingEvents` are a single shared queue
+// drained by the *first* ack from any client, a sender acking its own echo
+// would delete the item before the other device ever connected -- destroying
+// exactly the offline delivery the queue exists to provide.
+//
+// An item with no origin (e.g. sender.html, which has no WebSocket of its
+// own) belongs to no device and goes to everyone.
+function isOwnEcho(record, ws) {
+  return Boolean(record.origin) && ws.deviceId === record.origin
+}
+
+function broadcastRecord(type, record) {
+  const frame = frameFor(type, record)
   for (const client of wss.clients) {
-    if (client.readyState === client.OPEN) client.send(frame)
+    if (client.readyState === client.OPEN && !isOwnEcho(record, client)) client.send(frame)
   }
 }
 
@@ -314,7 +398,12 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy()
     return
   }
+  // Which device this socket belongs to, so we can skip echoing back what it
+  // sent itself. Absent for any client that doesn't identify itself, which
+  // simply means it receives everything.
+  const deviceId = url.searchParams.get('device') || null
   wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.deviceId = deviceId
     wss.emit('connection', ws, req)
   })
 })
@@ -324,10 +413,10 @@ wss.on('connection', (ws) => {
   ws.on('pong', () => { ws.isAlive = true })
 
   for (const message of pending) {
-    ws.send(JSON.stringify({ type: 'message', ...message }))
+    if (!isOwnEcho(message, ws)) ws.send(frameFor('message', message))
   }
   for (const event of pendingEvents) {
-    ws.send(JSON.stringify({ type: 'care-event', ...event }))
+    if (!isOwnEcho(event, ws)) ws.send(frameFor('care-event', event))
   }
 
   ws.on('message', (data) => {

@@ -26,9 +26,9 @@ vi.mock('./hooks/useFlavorText', () => ({
 // Capturing onEvent lets tests simulate an event arriving from another
 // device by just calling it directly, without a real WebSocket.
 const mockEmit = vi.fn()
-let capturedOnCareEvent: ((id: string, type: CareEventType) => void) | null = null
+let capturedOnCareEvent: ((id: string, type: CareEventType) => boolean) | null = null
 vi.mock('./hooks/useCareEvents', () => ({
-  useCareEvents: (onEvent: (id: string, type: CareEventType) => void) => {
+  useCareEvents: (onEvent: (id: string, type: CareEventType) => boolean) => {
     capturedOnCareEvent = onEvent
     return { emit: mockEmit }
   },
@@ -185,6 +185,25 @@ describe('App', () => {
       expect(screen.getByRole('progressbar', { name: 'Happiness' })).toHaveAttribute('aria-valuenow', '80')
       expect(screen.getByRole('progressbar', { name: 'Energy' })).toHaveAttribute('aria-valuenow', '80')
       expect(screen.getByRole('progressbar', { name: 'Cleanliness' })).toHaveAttribute('aria-valuenow', '80')
+    })
+
+    // The local pulse lists were hand-written per button and had drifted from
+    // what applyCareEvent actually changes; the CARE_EVENT_STATS table used
+    // for *remote* events was the correct one all along.
+    it('feeding pulses happiness too, since feeding raises it', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[FEED]'))
+      const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
+    })
+
+    it('petting pulses the happiness bar', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
+      const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
     })
 
     it('feeding increases fullness and briefly pulses the fullness bar', () => {
@@ -432,6 +451,46 @@ describe('App', () => {
       expect(fill).toHaveClass('pulsing')
     })
 
+    // The defect this guards: handleRemoteCareEventRef.current is assigned
+    // during render *after* the boot-splash and name-screen early returns, so
+    // it stays the default () => false while either is up. Reporting false is
+    // what keeps a partner's queued actions on the relay instead of acking
+    // them into oblivion during setup. Move that assignment above the early
+    // returns and every unit test still passes -- only this one fails.
+    it('does not ack a care event that arrives while the boot splash is up', () => {
+      seedSave()
+      render(<App />) // deliberately not renderApp(): stay on the splash
+      expect(screen.getByText(/booting/)).toBeInTheDocument()
+      expect(capturedOnCareEvent?.('during-splash', 'feed')).toBe(false)
+    })
+
+    it('does not ack a care event that arrives before the pet is named', () => {
+      localStorage.setItem('catmagochi-start-seen-v1', '1') // skip the splash
+      render(<App />)
+      expect(screen.getByText(/What should we name your new kitten/)).toBeInTheDocument()
+      expect(capturedOnCareEvent?.('before-adoption', 'feed')).toBe(false)
+    })
+
+    // The handler's return value is the ack decision useCareEvents acts on.
+    // A duplicate must still report true: it is dealt with, and leaving it
+    // unacked means the relay replays it on every reconnect, forever.
+    it('tells the relay to drop a redelivered event it has already applied', () => {
+      seedSave()
+      renderApp()
+      let first: boolean | undefined
+      let second: boolean | undefined
+      act(() => {
+        first = capturedOnCareEvent?.('remote-dup', 'feed')
+      })
+      act(() => {
+        second = capturedOnCareEvent?.('remote-dup', 'feed')
+      })
+      expect(first).toBe(true)
+      expect(second).toBe(true)
+      // ...but the deltas ran exactly once
+      expect(getSave().totalFeeds).toBe(1)
+    })
+
     it('shows the same reaction glyph for a remote feed as a local one', () => {
       seedSave()
       renderApp()
@@ -626,6 +685,25 @@ describe('App', () => {
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByText('[MENU]')).toBeDisabled()
     })
+
+    // The overlay hides the card but the buttons behind it were still live.
+    it('disables the care actions behind the menu overlay', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[MENU]'))
+      for (const label of ['[FEED]', '[PLAY]', '[CLEAN]', '[SLEEP]']) {
+        expect(screen.getByText(label)).toBeDisabled()
+      }
+    })
+
+    it('re-enables the care actions once the menu closes', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[MENU]'))
+      const overlay = screen.getByText('MENU').closest('.menu-panel') as HTMLElement
+      fireEvent.click(within(overlay).getByText('[ CLOSE ]'))
+      expect(screen.getByText('[FEED]')).not.toBeDisabled()
+    })
   })
 
   describe('stats window', () => {
@@ -644,6 +722,23 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
       fireEvent.click(screen.getByText('[ CLOSE ]'))
       expect(screen.queryByText("Mochi'S STATS")).not.toBeInTheDocument()
+    })
+
+    it('disables the care actions behind the stats overlay', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
+      expect(screen.getByText('[FEED]')).toBeDisabled()
+    })
+
+    it('returns focus to the pet name after closing', () => {
+      seedSave()
+      renderApp()
+      const nameButton = screen.getByRole('button', { name: 'Mochi' })
+      nameButton.focus()
+      fireEvent.click(nameButton)
+      fireEvent.click(screen.getByText('[ CLOSE ]'))
+      expect(document.activeElement).toBe(nameButton)
     })
 
     it('the pet name stays an accessible heading even though it is also clickable', () => {

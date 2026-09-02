@@ -1,7 +1,7 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +36,15 @@ describe('catmagochi relay server', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-test-'))
     child = spawn(process.execPath, ['server.js'], {
       cwd: __dirname,
-      env: { ...process.env, PORT: String(PORT), RELAY_TOKEN: TOKEN, DATA_DIR: dataDir },
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        RELAY_TOKEN: TOKEN,
+        DATA_DIR: dataDir,
+        // The fixtures below use a fake push host; PUSH_ALLOWED_HOSTS extends
+        // the built-in list of real push services rather than replacing it.
+        PUSH_ALLOWED_HOSTS: 'push.example.test',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     await waitForServer(BASE)
@@ -386,6 +394,111 @@ describe('catmagochi relay server', () => {
     wsB.close()
   })
 
+  // A device tags what it sends with its own `origin` id and identifies
+  // itself on connect with `?device=`. The relay never hands an item back to
+  // the device that sent it: the sender already applied it locally, and an
+  // echo it acked would drain the shared queue before the *other* device ever
+  // connected -- which is exactly what the queue exists to prevent.
+  function connect(deviceId) {
+    const query = deviceId ? `?token=${TOKEN}&device=${deviceId}` : `?token=${TOKEN}`
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws${query}`)
+    ws.frames = []
+    ws.onmessage = (e) => ws.frames.push(JSON.parse(e.data))
+    return new Promise((resolve, reject) => {
+      ws.onopen = () => resolve(ws)
+      ws.onerror = reject
+    })
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 150))
+
+  // Same wire ack as ackMessage above -- the server drains both queues by id.
+  const ackEvent = (id) => ackMessage(id)
+
+  test('a care event is not echoed back to the device that sent it', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-no-echo', type: 'feed', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.deepEqual(wsA.frames, [])
+    wsA.close()
+    await ackEvent('evt-no-echo')
+  })
+
+  test('a care event still reaches a second device that only connects later', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-offline-partner', type: 'feed', origin: 'device-a' }),
+    })
+    await settle()
+
+    // device-b was offline for the send and only connects afterwards
+    const wsB = await connect('device-b')
+    await settle()
+
+    assert.deepEqual(
+      wsB.frames.map((f) => f.id),
+      ['evt-offline-partner'],
+    )
+    wsB.send(JSON.stringify({ type: 'ack', id: 'evt-offline-partner' }))
+    await settle()
+    wsA.close()
+    wsB.close()
+  })
+
+  test('a message is not echoed back to the device that sent it', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'msg-no-echo', text: 'Thinking of you', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.deepEqual(wsA.frames, [])
+    wsA.close()
+    await ackMessage('msg-no-echo')
+  })
+
+  test('a message with no origin (sender.html) still reaches every device', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'msg-from-sender-page', text: 'hello from home' }),
+    })
+    await settle()
+
+    assert.deepEqual(
+      wsA.frames.map((f) => f.text),
+      ['hello from home'],
+    )
+    wsA.close()
+    await ackMessage('msg-from-sender-page')
+  })
+
+  test('the origin id is kept server-side rather than broadcast to clients', async () => {
+    const wsB = await connect('device-b')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-origin-hidden', type: 'pet', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.equal(wsB.frames.length, 1)
+    assert.ok(!('origin' in wsB.frames[0]))
+    wsB.send(JSON.stringify({ type: 'ack', id: 'evt-origin-hidden' }))
+    await settle()
+    wsB.close()
+  })
+
   const fakeSubscription = {
     endpoint: 'https://push.example.test/fake-endpoint',
     keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' },
@@ -398,6 +511,93 @@ describe('catmagochi relay server', () => {
       body: JSON.stringify({ token: 'wrong', subscription: fakeSubscription, types: {} }),
     })
     assert.equal(res.status, 401)
+  })
+
+  // Without a host check, anyone who reads the token out of the client bundle
+  // can register a subscription pointing at their own server, with their own
+  // keys -- and from then on every private message is delivered to them in
+  // plaintext, forever (pruning only happens on 404/410, which they control).
+  test('POST /push/subscribe rejects an endpoint that is not a known push service', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint: 'https://attacker.example.com/collect', keys: { p256dh: 'k', auth: 'a' } },
+      }),
+    })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error, 'unsupported push endpoint')
+  })
+
+  test('POST /push/subscribe rejects a non-https endpoint', async () => {
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint: 'http://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'k', auth: 'a' } },
+      }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('POST /push/subscribe accepts the real push services out of the box', async () => {
+    for (const endpoint of [
+      'https://fcm.googleapis.com/fcm/send/abc123',
+      'https://updates.push.services.mozilla.com/wpush/v2/abc123',
+      'https://web.push.apple.com/abc123',
+      'https://db5p.notify.windows.com/w/?token=abc123',
+    ]) {
+      const res = await fetch(`${BASE}/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } } })  ,
+      })
+      assert.equal(res.status, 200, `expected ${endpoint} to be accepted`)
+      await fetch(`${BASE}/push/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, endpoint }),
+      })
+    }
+  })
+
+  test('POST /push/subscribe accepts the legacy Chrome/GCM endpoint', async () => {
+    const endpoint = 'https://android.googleapis.com/gcm/send/legacy123'
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } } }),
+    })
+    assert.equal(res.status, 200)
+    await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, endpoint }),
+    })
+  })
+
+  // Stored so a push about something this device just did can skip it -- see
+  // pushTargets.js.
+  test('POST /push/subscribe records the subscribing device id', async () => {
+    const endpoint = 'https://push.example.test/with-device'
+    await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } },
+        device: 'device-a',
+      }),
+    })
+    const stored = JSON.parse(readFileSync(join(dataDir, 'subscriptions.json'), 'utf-8'))
+    assert.equal(stored.find((s) => s.subscription.endpoint === endpoint).device, 'device-a')
+    await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, endpoint }),
+    })
   })
 
   test('POST /push/subscribe rejects a malformed subscription', async () => {
@@ -507,6 +707,9 @@ describe('catmagochi relay server with push enabled', () => {
         DATA_DIR: dataDir,
         VAPID_PUBLIC_KEY: vapidKeys.publicKey,
         VAPID_PRIVATE_KEY: vapidKeys.privateKey,
+        // Same fake push host as the main suite -- extends, not replaces, the
+        // built-in allowlist of real push services.
+        PUSH_ALLOWED_HOSTS: 'push.example.test',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -559,5 +762,65 @@ describe('catmagochi relay server startup', () => {
       child.on('exit', (exitCode) => resolve([exitCode]))
     })
     assert.equal(code, 1)
+  })
+
+  // writeFileSync truncates before writing, so an OOM/redeploy/crash midway
+  // leaves half-written JSON. Every loader fell back to [] without a word,
+  // so the operator saw a healthy "relay listening" while the whole
+  // undelivered queue had just been dropped.
+  test('reports a corrupt data file instead of silently starting empty', async () => {
+    const PORT_C = 19084
+    const BASE_C = `http://localhost:${PORT_C}`
+    const dir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-corrupt-'))
+    writeFileSync(join(dir, 'messages.json'), '[{"id":"half-writ')
+    const child = spawn(process.execPath, ['server.js'], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: String(PORT_C), RELAY_TOKEN: TOKEN, DATA_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', (d) => { stderr += d })
+    try {
+      await waitForServer(BASE_C)
+      assert.match(stderr, /messages/i, 'expected the unreadable file to be reported on stderr')
+      // and it still serves rather than refusing to boot
+      const res = await fetch(`${BASE_C}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, text: 'still working' }),
+      })
+      assert.equal(res.status, 200)
+    } finally {
+      child.kill()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('persists via a temp file and leaves none behind', async () => {
+    const PORT_A = 19085
+    const BASE_A = `http://localhost:${PORT_A}`
+    const dir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-atomic-'))
+    const child = spawn(process.execPath, ['server.js'], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: String(PORT_A), RELAY_TOKEN: TOKEN, DATA_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    try {
+      await waitForServer(BASE_A)
+      await fetch(`${BASE_A}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, text: 'atomic write' }),
+      })
+      const files = readdirSync(dir)
+      assert.ok(files.includes('messages.json'))
+      assert.deepEqual(files.filter((f) => f.endsWith('.tmp')), [], 'temp files should be renamed away')
+      // the committed file is complete, not a partial write
+      const parsed = JSON.parse(readFileSync(join(dir, 'messages.json'), 'utf-8'))
+      assert.equal(parsed[0].text, 'atomic write')
+    } finally {
+      child.kill()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

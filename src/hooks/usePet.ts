@@ -28,25 +28,51 @@ function defaultSave(name: string): PetSave {
   }
 }
 
+const STAT_KEYS: (keyof PetStats)[] = ['fullness', 'happiness', 'energy', 'cleanliness']
+
+// Valid JSON is not the same as a valid save. A parseable-but-wrong value
+// (an older shape, a hand-edited entry, another app on the same origin)
+// used to flow straight into applyElapsed() and throw on `stats.fullness`,
+// which blanks the screen with no in-app way to recover.
+//
+// Scope is deliberately just the fields that can *crash* the app: `name` and
+// the four numeric stats. A bad `growth` or `adoptedAt` renders wrong (an odd
+// stage, "NaN days ago" in StatsWindow) but stays recoverable by playing, so
+// it isn't worth throwing a real pet away over.
+function isPetSaveShaped(value: unknown): value is Partial<PetSave> & { name: string; stats: PetStats } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const { name, stats } = value as { name?: unknown; stats?: unknown }
+  if (typeof name !== 'string') return false
+  if (typeof stats !== 'object' || stats === null) return false
+  return STAT_KEYS.every((key) => Number.isFinite((stats as Record<string, unknown>)[key]))
+}
+
 function loadSave(): PetSave | null {
   const raw = localStorage.getItem(SAVE_KEY)
   if (!raw) return null
+  let parsed: unknown
   try {
-    // Saves from before a given field existed merge in a default -- adoptedAt
-    // can't recover the real original date, so it just starts counting from
-    // whenever the save is first loaded post-upgrade (best-effort, not exact).
-    return {
-      growth: 0,
-      adoptedAt: Date.now(),
-      totalFeeds: 0,
-      totalPlays: 0,
-      totalCleans: 0,
-      totalPets: 0,
-      ...(JSON.parse(raw) as Partial<PetSave>),
-    } as PetSave
+    parsed = JSON.parse(raw)
   } catch {
     return null
   }
+  if (!isPetSaveShaped(parsed)) return null
+  // Saves from before a given field existed merge in a default -- adoptedAt
+  // can't recover the real original date, so it just starts counting from
+  // whenever the save is first loaded post-upgrade (best-effort, not exact).
+  return {
+    growth: 0,
+    adoptedAt: Date.now(),
+    totalFeeds: 0,
+    totalPlays: 0,
+    totalCleans: 0,
+    totalPets: 0,
+    ...parsed,
+    // A save that lost only its timestamp is still a pet worth keeping --
+    // treat it as "last seen just now" rather than discarding it.
+    lastUpdate: Number.isFinite(parsed.lastUpdate) ? (parsed.lastUpdate as number) : Date.now(),
+    sleeping: Boolean(parsed.sleeping),
+  } as PetSave
 }
 
 function applyElapsed(stats: PetStats, sleeping: boolean, elapsedMs: number): PetStats {
@@ -123,6 +149,11 @@ export function deriveMood(stats: PetStats, sleeping: boolean): Mood {
 }
 
 export type OnCareEvent = (id: string, type: CareEventType) => void
+
+// What happened to an inbound event from another device. 'applied' and
+// 'duplicate' both mean "the relay can drop it"; only 'no-pet' means "keep
+// it queued and send it again". See applyRemoteEvent.
+export type RemoteEventResult = 'applied' | 'duplicate' | 'no-pet'
 
 export function usePet(onCareEvent?: OnCareEvent) {
   const [save, setSave] = useState<PetSave | null>(() => {
@@ -223,11 +254,20 @@ export function usePet(onCareEvent?: OnCareEvent) {
   // skips the `sleeping` gate local actions have -- sleeping is a
   // per-device UI toggle, not synced state, so it shouldn't block a
   // remote party's actions from landing here.
-  const applyRemoteEvent = useCallback((id: string, type: CareEventType) => {
-    if (appliedEventIds.current.has(id)) return false
+  const applyRemoteEvent = useCallback((id: string, type: CareEventType): RemoteEventResult => {
+    // No pet yet (boot splash, name screen). Report it unhandled and do *not*
+    // claim the id, so useCareEvents leaves it unacked and the relay replays
+    // it once there's actually a cat to apply it to. Claiming it here would
+    // silently destroy a partner's queued actions during setup.
+    if (!saveRef.current) return 'no-pet'
+    // Already applied -- don't run the deltas again, but this event *is*
+    // dealt with, so the caller must still ack it away. Reporting it the
+    // same as 'no-pet' would leave a redelivered event unackable and it
+    // would come back on every reconnect, forever.
+    if (appliedEventIds.current.has(id)) return 'duplicate'
     appliedEventIds.current.add(id)
     setSave((current) => (current ? applyCareEvent(current, type) : current))
-    return true
+    return 'applied'
   }, [])
 
   const receiveMessage = useCallback(() => {

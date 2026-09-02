@@ -45,6 +45,9 @@ export function AsciiCat({
   const [frame, setFrame] = useState<0 | 1>(0)
   const [idleFrame, setIdleFrame] = useState(0)
   const [cueGlyph, setCueGlyph] = useState<string | null>(null)
+  // Counts cues specifically, so the alternating bounce class below doesn't
+  // depend on glyphPop.key -- which ambient and revert pops also bump.
+  const [cueSeq, setCueSeq] = useState(0)
   const [glyphPop, setGlyphPop] = useState<{ text: string; top: string; left: string; key: number } | null>(null)
   const reactTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const glyphKey = useRef(0)
@@ -102,6 +105,7 @@ export function AsciiCat({
   const showCue = (glyph: string) => {
     cueActiveRef.current = true
     setCueGlyph(glyph)
+    setCueSeq((n) => n + 1)
     popGlyph(glyph)
     clearTimeout(reactTimer.current)
     reactTimer.current = setTimeout(() => {
@@ -162,7 +166,11 @@ export function AsciiCat({
         </div>
       )}
       <div
-        className={`ascii-screen${cueGlyph ? ' reacting' : ''}`}
+        // Alternating class, one step per cue: a repeated identical action
+        // produces the same cueGlyph string, so without a className that
+        // actually changes the browser has no reason to replay pet-bounce and
+        // the cat sits still on the second press.
+        className={`ascii-screen${cueGlyph ? ` reacting reacting-${cueSeq % 2}` : ''}`}
         role="button"
         tabIndex={0}
         aria-label={`Pet ${name}`}

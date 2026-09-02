@@ -69,7 +69,10 @@ function App() {
   // creates the WebSocket connection) without a chicken-and-egg ordering
   // problem -- see the assignment right before the early return below,
   // which mirrors the saveRef-updated-every-render pattern in usePet.ts.
-  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType) => void>(() => {})
+  // Defaults to reporting not-applied: until the assignment below runs (it
+  // sits after the boot-splash / name-screen early returns), there is nothing
+  // to apply an event to, and useCareEvents must not ack it off the relay.
+  const handleRemoteCareEventRef = useRef<(id: string, type: CareEventType) => boolean>(() => false)
   const { save, mood, createPet, feed, playGame, clean, toggleSleep, pet, receiveMessage, applyRemoteEvent } = usePet(
     (id, type) => careEvents.emit(id, type),
   )
@@ -164,6 +167,14 @@ function App() {
     }, 500)
   }
 
+  // Local actions pulse from the same CARE_EVENT_STATS table remote events
+  // use, rather than a hand-written list per button -- those had drifted from
+  // what applyCareEvent actually changes (FEED raises happiness but never
+  // pulsed it; petting pulsed nothing at all).
+  const pulseFor = (type: CareEventType) => {
+    for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
+  }
+
   const triggerCue = (type: ActionCueType) => {
     // A fresh object every call, so pressing the same action type twice in a
     // row still re-fires AsciiCat's effect (unlike a bare string/primitive,
@@ -184,16 +195,22 @@ function App() {
   // is false for a dedup'd echo of our own action or an already-seen event
   // replayed after reconnect, which should stay silent.
   handleRemoteCareEventRef.current = (id, type) => {
-    const applied = applyRemoteEvent(id, type)
-    if (!applied) return
-    for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
+    const result = applyRemoteEvent(id, type)
+    // A duplicate gets no reactions (it changed nothing) but must still be
+    // acked, or the relay replays it on every reconnect.
+    if (result !== 'applied') return result === 'duplicate'
+    pulseFor(type)
     if (type === 'feed' || type === 'clean' || type === 'play') triggerCue(type)
     if (type !== 'play') maybeShowActionFlavor(type)
+    return true
   }
 
   const handlePetClick = () => {
     const applied = pet()
-    if (applied) maybeShowActionFlavor('pet')
+    if (applied) {
+      pulseFor('pet')
+      maybeShowActionFlavor('pet')
+    }
     return applied
   }
 
@@ -211,7 +228,7 @@ function App() {
 
   const handleSendNudge = async (text: string) => {
     playGame()
-    for (const stat of CARE_EVENT_STATS.play) pulse(stat)
+    pulseFor('play')
     triggerCue('play')
     setPlayPickerOpen(false)
     const status = await send(text, 'nudge')
@@ -242,7 +259,13 @@ function App() {
     dismissNotificationPrompt()
   }
 
-  const actionsDisabled = sleeping || playPickerOpen || messages.length > 0
+  // Belt and braces alongside useDialog's focus trap, for the care actions
+  // specifically. The overlay blocks pointers and the trap blocks Tab, so
+  // this is the third line of defence, not the first -- and it is deliberately
+  // partial: the cat, the stage badge, the name button and [MENU] stay
+  // enabled behind the overlay because nothing can reach them either way.
+  const overlayOpen = menuOpen || statsOpen
+  const actionsDisabled = sleeping || playPickerOpen || messages.length > 0 || overlayOpen
 
   return (
     <div className="game">
@@ -329,9 +352,9 @@ function App() {
       </div>
 
       <div className="actions">
-        <button onClick={() => { feed(); pulse('fullness'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
+        <button onClick={() => { feed(); pulseFor('feed'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
         <button onClick={() => setPlayPickerOpen(true)} disabled={actionsDisabled}>[PLAY]</button>
-        <button onClick={() => { clean(); pulse('cleanliness'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
+        <button onClick={() => { clean(); pulseFor('clean'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
         <button
           onClick={() => {
             const cue: ActionCueType = sleeping ? 'wake' : 'sleep'
@@ -339,7 +362,7 @@ function App() {
             triggerCue(cue)
             maybeShowActionFlavor(cue)
           }}
-          disabled={playPickerOpen || messages.length > 0}
+          disabled={playPickerOpen || messages.length > 0 || overlayOpen}
           className={sleeping ? 'active' : ''}
         >
           {sleeping ? '[WAKE]' : '[SLEEP]'}

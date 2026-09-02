@@ -32,6 +32,7 @@ class MockWebSocket {
 }
 
 const OUTBOX_KEY = 'catmagochi-care-outbox-v1'
+const DEVICE_ID_KEY = 'catmagochi-device-id-v1'
 
 async function loadUseCareEvents(url: string, token: string) {
   vi.resetModules()
@@ -47,6 +48,9 @@ describe('useCareEvents', () => {
   beforeEach(() => {
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket)
+    // Pin the device id so wire-format assertions stay deterministic; without
+    // this getDeviceId() mints a fresh UUID per test.
+    localStorage.setItem(DEVICE_ID_KEY, 'test-device')
   })
 
   afterEach(() => {
@@ -69,12 +73,19 @@ describe('useCareEvents', () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'secret-token')
     renderHook(() => useCareEvents(vi.fn()))
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token')
+    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token&device=test-device')
+  })
+
+  it('identifies this device on connect so the relay can skip echoing its own events back', async () => {
+    localStorage.setItem(DEVICE_ID_KEY, 'another-device')
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    renderHook(() => useCareEvents(vi.fn()))
+    expect(MockWebSocket.instances[0].url).toContain('device=another-device')
   })
 
   it('applies an incoming care-event frame and acks it', async () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
-    const onEvent = vi.fn()
+    const onEvent = vi.fn(() => true)
     renderHook(() => useCareEvents(onEvent))
     const ws = MockWebSocket.instances[0]
     ws.readyState = MockWebSocket.OPEN
@@ -85,9 +96,39 @@ describe('useCareEvents', () => {
     expect(ws.sent).toEqual([JSON.stringify({ type: 'ack', id: 'e1' })])
   })
 
+  // An ack tells the relay "delivered, drop it" -- and because the pending
+  // queue is shared, dropping it means the other device never sees it either.
+  // So only ack what actually landed: during the boot splash / name screen
+  // there is no pet yet and applyRemoteEvent reports false.
+  it('does not ack an event the app reports it could not apply', async () => {
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    const onEvent = vi.fn(() => false)
+    renderHook(() => useCareEvents(onEvent))
+    const ws = MockWebSocket.instances[0]
+    ws.readyState = MockWebSocket.OPEN
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e-unapplied', eventType: 'feed', sentAt: 1 }) })
+    })
+    expect(onEvent).toHaveBeenCalledWith('e-unapplied', 'feed')
+    expect(ws.sent).toEqual([])
+  })
+
+  // A redelivered event the app has already applied is dealt with -- it has
+  // to be acked, or it comes back on every single reconnect.
+  it('acks an event the app reports it has already applied', async () => {
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    renderHook(() => useCareEvents(vi.fn(() => true)))
+    const ws = MockWebSocket.instances[0]
+    ws.readyState = MockWebSocket.OPEN
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e-dup', eventType: 'feed', sentAt: 1 }) })
+    })
+    expect(ws.sent).toEqual([JSON.stringify({ type: 'ack', id: 'e-dup' })])
+  })
+
   it('does not ack when the socket is not open', async () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
-    const onEvent = vi.fn()
+    const onEvent = vi.fn(() => true)
     renderHook(() => useCareEvents(onEvent))
     const ws = MockWebSocket.instances[0]
     ws.readyState = MockWebSocket.CONNECTING
@@ -195,12 +236,33 @@ describe('useCareEvents', () => {
           'https://relay.test/care-event',
           expect.objectContaining({
             method: 'POST',
-            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed' }),
+            // origin lets the relay skip echoing this back -- see deviceId.ts
+            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed', origin: 'test-device' }),
           }),
         )
       })
       await waitFor(() => {
         expect(JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]')).toEqual([])
+      })
+    })
+
+    // deviceId.ts already handles a throwing localStorage; the outbox sat
+    // right beside it and did not, so a quota/private-mode failure threw
+    // straight out of the click handler that fed the cat.
+    it('still sends the event when the outbox cannot be persisted', async () => {
+      fetchMock.mockResolvedValue({ ok: true })
+      const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useCareEvents(vi.fn(() => true)))
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('QuotaExceededError')
+      })
+      expect(() => {
+        act(() => {
+          result.current.emit('e1', 'feed')
+        })
+      }).not.toThrow()
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
       })
     })
 
@@ -285,7 +347,10 @@ describe('useCareEvents', () => {
         expect(fetchMock).toHaveBeenCalledWith(
           'https://relay.test/care-event',
           expect.objectContaining({
-            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet' }),
+            // A flush after a restart still carries our origin -- this is
+            // what stops the event being echoed back and double-applied once
+            // the in-memory appliedEventIds set is gone.
+            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet', origin: 'test-device' }),
           }),
         )
       })

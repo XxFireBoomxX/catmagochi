@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { CareEventType } from '../types'
+import { getDeviceId } from '../data/deviceId'
 
 const RELAY_URL: string | undefined = import.meta.env.VITE_RELAY_URL
 const RELAY_TOKEN: string | undefined = import.meta.env.VITE_RELAY_TOKEN
@@ -29,10 +30,20 @@ function loadOutbox(): OutboxEntry[] {
 }
 
 function saveOutbox(entries: OutboxEntry[]) {
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
+  } catch {
+    // Quota exceeded, or storage blocked (private mode). The in-memory outbox
+    // still works for this session; losing the persisted copy costs a retry
+    // after a restart, which beats throwing out of the click handler that
+    // triggered the action.
+  }
 }
 
-export type CareEventHandler = (id: string, type: CareEventType) => void
+// Returns whether the event was actually applied. Acking tells the relay to
+// drop it from a queue *shared with the other device*, so an event we could
+// not apply (no pet yet) must stay unacked and be replayed later.
+export type CareEventHandler = (id: string, type: CareEventType) => boolean
 
 // Mirrors useMessages' reconnect/backoff shape, but for the care-event sync
 // used by the shared-pet feature -- deliberately a separate WebSocket
@@ -70,7 +81,15 @@ export function useCareEvents(onEvent: CareEventHandler) {
           const res = await fetch(`${HTTP_RELAY_URL}/care-event`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: RELAY_TOKEN, id: next.id, type: next.type }),
+            // origin lets the relay skip handing this straight back to us --
+            // we already applied it locally, and acking our own echo would
+            // drain it from the shared queue before the other device connects.
+            body: JSON.stringify({
+              token: RELAY_TOKEN,
+              id: next.id,
+              type: next.type,
+              origin: getDeviceId(),
+            }),
           })
           if (!res.ok) break
           outbox.current = outbox.current.slice(1)
@@ -91,7 +110,9 @@ export function useCareEvents(onEvent: CareEventHandler) {
     let stopped = false
 
     const connect = () => {
-      const ws = new WebSocket(`${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}`)
+      const ws = new WebSocket(
+        `${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}&device=${encodeURIComponent(getDeviceId())}`,
+      )
       wsRef.current = ws
 
       ws.onopen = () => {
@@ -103,8 +124,8 @@ export function useCareEvents(onEvent: CareEventHandler) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'care-event' && CARE_EVENT_TYPES.has(data.eventType)) {
-            onEventRef.current(data.id, data.eventType)
-            if (ws.readyState === WebSocket.OPEN) {
+            const applied = onEventRef.current(data.id, data.eventType)
+            if (applied && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ack', id: data.id }))
             }
           }
