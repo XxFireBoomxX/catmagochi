@@ -5,6 +5,7 @@ import { usePwaUpdate, type PwaUpdateStatus } from '../hooks/usePwaUpdate'
 import { useNativeUpdate, type NativeUpdateStatus } from '../hooks/useNativeUpdate'
 import type { NotificationSettings } from '../hooks/useNotificationSettings'
 import type { PushStatus } from '../hooks/usePushSubscription'
+import { useDialog } from '../hooks/useDialog'
 import './Menu.css'
 
 type MenuView = 'root' | 'history' | 'update' | 'settings'
@@ -67,6 +68,9 @@ export function Menu({
   pushStatus: PushStatus
 }) {
   const [view, setView] = useState<MenuView>('root')
+  // Re-focuses on every view switch, since each view replaces the panel's
+  // whole contents including the button that currently has focus.
+  const panelRef = useDialog(open, onClose, view)
   const isNative = Capacitor.isNativePlatform()
   const pwaUpdate = usePwaUpdate()
   const nativeUpdate = useNativeUpdate()
@@ -102,10 +106,10 @@ export function Menu({
 
   return (
     <div className="menu-overlay">
-      <div className="menu-panel">
+      <div className="menu-panel" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="menu-title">
         {view === 'root' && (
           <>
-            <div className="menu-title">MENU</div>
+            <div className="menu-title" id="menu-title">MENU</div>
             <div className="menu-list">
               {MENU_ITEMS.map((item) => (
                 <button key={item.view} className="menu-item" onClick={() => setView(item.view)}>
@@ -119,7 +123,7 @@ export function Menu({
 
         {view === 'history' && (
           <>
-            <div className="menu-title">MESSAGE HISTORY</div>
+            <div className="menu-title" id="menu-title">MESSAGE HISTORY</div>
             <div className="menu-history-list">
               {history.length === 0 ? (
                 <p className="menu-empty">No messages yet.</p>
@@ -138,7 +142,7 @@ export function Menu({
 
         {view === 'update' && (
           <>
-            <div className="menu-title">APP UPDATE</div>
+            <div className="menu-title" id="menu-title">APP UPDATE</div>
             <p className="menu-update-status">{update.text}</p>
             {update.ready ? (
               <button className="menu-item" onClick={update.onApply}>[ RELOAD NOW ]</button>
@@ -153,7 +157,7 @@ export function Menu({
 
         {view === 'settings' && (
           <>
-            <div className="menu-title">SETTINGS</div>
+            <div className="menu-title" id="menu-title">SETTINGS</div>
             <div className="menu-settings-list">
               <div className="menu-settings-row">
                 <span className="menu-settings-label">Notifications</span>

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { WebSocketServer } from 'ws'
 import webpush from 'web-push'
 
@@ -75,47 +75,51 @@ if (PUSH_ENABLED) {
   webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 }
 
-let pending = []
-if (existsSync(MESSAGES_FILE)) {
-  try {
-    pending = JSON.parse(readFileSync(MESSAGES_FILE, 'utf-8'))
-  } catch {
-    pending = []
-  }
+// writeFileSync truncates the target before writing it, so a crash, OOM or
+// redeploy midway through leaves half-written JSON on the volume -- and the
+// loader below then reads it as an empty queue. Writing to a sibling temp
+// file and renaming makes the swap atomic on the same filesystem: readers
+// see either the old file or the new one, never a partial one.
+function writeJsonAtomic(file, value) {
+  const tmp = new URL(`${file.href}.tmp`)
+  writeFileSync(tmp, JSON.stringify(value, null, 2))
+  renameSync(tmp, file)
 }
+
+// Starting empty is the right recovery, but doing it silently makes a total
+// loss of the queue look identical to a healthy boot. Say so on stderr.
+function readJsonArray(file, label) {
+  if (!existsSync(file)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8'))
+    if (Array.isArray(parsed)) return parsed
+    console.error(`${label} at ${file.href} is not an array; starting empty`)
+  } catch (err) {
+    console.error(`could not read ${label} at ${file.href}; starting empty:`, err.message)
+  }
+  return []
+}
+
+let pending = readJsonArray(MESSAGES_FILE, 'pending messages')
 
 function persist() {
-  writeFileSync(MESSAGES_FILE, JSON.stringify(pending, null, 2))
+  writeJsonAtomic(MESSAGES_FILE, pending)
 }
 
-let subscriptions = []
-if (existsSync(SUBSCRIPTIONS_FILE)) {
-  try {
-    subscriptions = JSON.parse(readFileSync(SUBSCRIPTIONS_FILE, 'utf-8'))
-  } catch {
-    subscriptions = []
-  }
-}
+let subscriptions = readJsonArray(SUBSCRIPTIONS_FILE, 'push subscriptions')
 
 function persistSubscriptions() {
-  writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptions, null, 2))
+  writeJsonAtomic(SUBSCRIPTIONS_FILE, subscriptions)
 }
 
 // Care events (feed/clean/pet/play) for the shared-pet sync -- same
 // queue-and-replay shape as `pending` messages above, kept as a fully
 // separate store since they're a different domain (game-state deltas, not
 // chat notes) even though the transport mechanics are identical.
-let pendingEvents = []
-if (existsSync(EVENTS_FILE)) {
-  try {
-    pendingEvents = JSON.parse(readFileSync(EVENTS_FILE, 'utf-8'))
-  } catch {
-    pendingEvents = []
-  }
-}
+let pendingEvents = readJsonArray(EVENTS_FILE, 'pending care events')
 
 function persistEvents() {
-  writeFileSync(EVENTS_FILE, JSON.stringify(pendingEvents, null, 2))
+  writeJsonAtomic(EVENTS_FILE, pendingEvents)
 }
 
 // Sends a push to every subscriber who hasn't opted out of `type`. Prunes

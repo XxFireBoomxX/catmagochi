@@ -30,6 +30,23 @@ describe('AsciiCat', () => {
     expect(document.querySelector('.cat-effect')).toBeNull()
   })
 
+  // App deliberately passes a fresh { type } object so the effect re-fires on
+  // a repeated identical action -- but setCueGlyph('nom nom') twice is
+  // Object.is-equal, so the className never changed and CSS had no reason to
+  // replay pet-bounce. The cat sat still on every repeat press.
+  it('replays the reaction animation when the same action fires twice', () => {
+    const { rerender } = render(
+      <AsciiCat mood="happy" name="Mochi" stage="kitten" onPet={() => true} actionCue={{ type: 'feed' }} />,
+    )
+    const screenEl = screen.getByRole('button', { name: 'Pet Mochi' })
+    expect(screenEl.className).toContain('reacting')
+    const first = screenEl.className
+
+    rerender(<AsciiCat mood="happy" name="Mochi" stage="kitten" onPet={() => true} actionCue={{ type: 'feed' }} />)
+    expect(screenEl.className).toContain('reacting')
+    expect(screenEl.className).not.toBe(first)
+  })
+
   it('calls onPet when the screen is clicked', () => {
     const onPet = vi.fn().mockReturnValue(true)
     render(<AsciiCat mood="happy" name="Mochi" stage="kitten" onPet={onPet} actionCue={null} />)

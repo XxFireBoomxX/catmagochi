@@ -1,5 +1,6 @@
 import type { Mood, PetSave, Stage } from '../types'
 import { STAGE_LABEL } from '../data/growth'
+import { useDialog } from '../hooks/useDialog'
 import './Menu.css'
 import './StatsWindow.css'
 
@@ -23,6 +24,10 @@ export function StatsWindow({
   stage: Stage
   onClose: () => void
 }) {
+  // Called before the early return: hooks can't be conditional, and the
+  // overlay needs the same Escape/focus-trap behaviour as Menu.
+  const panelRef = useDialog(open, onClose)
+
   if (!open) return null
 
   const rows: [string, string][] = [
@@ -42,8 +47,8 @@ export function StatsWindow({
 
   return (
     <div className="menu-overlay">
-      <div className="menu-panel">
-        <div className="menu-title">{save.name}'S STATS</div>
+      <div className="menu-panel" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="stats-window-title">
+        <div className="menu-title" id="stats-window-title">{save.name}'S STATS</div>
         <div className="stats-window-body">
           {rows.map(([label, value]) => (
             <div key={label} className="stats-row">

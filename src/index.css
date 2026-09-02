@@ -54,3 +54,18 @@ button {
   font: inherit;
   cursor: pointer;
 }
+
+/* Nothing in the app showed where keyboard focus was, which made the overlays
+   impossible to navigate without guessing. :focus-visible so it only appears
+   for keyboard/AT users, not on tap or click. Uses the existing glow palette
+   rather than the UA default, which is near-invisible on this dark ground. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* The cat and the message card are role="button" divs, so they get the same
+   treatment -- their own borders are part of the art, so offset a little more. */
+.ascii-screen:focus-visible {
+  outline-offset: 4px;
+}

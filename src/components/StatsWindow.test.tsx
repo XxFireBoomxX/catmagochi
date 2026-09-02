@@ -87,6 +87,37 @@ describe('StatsWindow', () => {
     expect(screen.getByText('1 day ago')).toBeInTheDocument()
   })
 
+  // Same overlay chrome as Menu, so the same trap applies -- otherwise Tab
+  // walks out onto the game's action buttons behind it.
+  describe('dialog behaviour', () => {
+    it('exposes itself as a modal dialog named after the pet', () => {
+      render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={() => {}} />)
+      const dialog = screen.getByRole('dialog')
+      expect(dialog).toHaveAttribute('aria-modal', 'true')
+      expect(dialog).toHaveAccessibleName("Mochi'S STATS")
+    })
+
+    it('moves focus into the panel when it opens', () => {
+      render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={() => {}} />)
+      expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
+    })
+
+    it('closes on Escape', () => {
+      const onClose = vi.fn()
+      render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={onClose} />)
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps focus on its only control when tabbing', () => {
+      render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={() => {}} />)
+      const close = screen.getByText('[ CLOSE ]')
+      close.focus()
+      fireEvent.keyDown(document, { key: 'Tab' })
+      expect(document.activeElement).toBe(close)
+    })
+  })
+
   it('calls onClose when the close button is clicked', () => {
     const onClose = vi.fn()
     render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={onClose} />)

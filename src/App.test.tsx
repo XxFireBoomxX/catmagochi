@@ -187,6 +187,25 @@ describe('App', () => {
       expect(screen.getByRole('progressbar', { name: 'Cleanliness' })).toHaveAttribute('aria-valuenow', '80')
     })
 
+    // The local pulse lists were hand-written per button and had drifted from
+    // what applyCareEvent actually changes; the CARE_EVENT_STATS table used
+    // for *remote* events was the correct one all along.
+    it('feeding pulses happiness too, since feeding raises it', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[FEED]'))
+      const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
+    })
+
+    it('petting pulses the happiness bar', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
+      const fill = screen.getByRole('progressbar', { name: 'Happiness' }).querySelector('.stat-fill')
+      expect(fill).toHaveClass('pulsing')
+    })
+
     it('feeding increases fullness and briefly pulses the fullness bar', () => {
       seedSave()
       renderApp()
@@ -626,6 +645,25 @@ describe('App', () => {
       fireEvent.click(screen.getByText('[PLAY]'))
       expect(screen.getByText('[MENU]')).toBeDisabled()
     })
+
+    // The overlay hides the card but the buttons behind it were still live.
+    it('disables the care actions behind the menu overlay', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[MENU]'))
+      for (const label of ['[FEED]', '[PLAY]', '[CLEAN]', '[SLEEP]']) {
+        expect(screen.getByText(label)).toBeDisabled()
+      }
+    })
+
+    it('re-enables the care actions once the menu closes', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[MENU]'))
+      const overlay = screen.getByText('MENU').closest('.menu-panel') as HTMLElement
+      fireEvent.click(within(overlay).getByText('[ CLOSE ]'))
+      expect(screen.getByText('[FEED]')).not.toBeDisabled()
+    })
   })
 
   describe('stats window', () => {
@@ -644,6 +682,23 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
       fireEvent.click(screen.getByText('[ CLOSE ]'))
       expect(screen.queryByText("Mochi'S STATS")).not.toBeInTheDocument()
+    })
+
+    it('disables the care actions behind the stats overlay', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByRole('button', { name: 'Mochi' }))
+      expect(screen.getByText('[FEED]')).toBeDisabled()
+    })
+
+    it('returns focus to the pet name after closing', () => {
+      seedSave()
+      renderApp()
+      const nameButton = screen.getByRole('button', { name: 'Mochi' })
+      nameButton.focus()
+      fireEvent.click(nameButton)
+      fireEvent.click(screen.getByText('[ CLOSE ]'))
+      expect(document.activeElement).toBe(nameButton)
     })
 
     it('the pet name stays an accessible heading even though it is also clickable', () => {

@@ -167,6 +167,14 @@ function App() {
     }, 500)
   }
 
+  // Local actions pulse from the same CARE_EVENT_STATS table remote events
+  // use, rather than a hand-written list per button -- those had drifted from
+  // what applyCareEvent actually changes (FEED raises happiness but never
+  // pulsed it; petting pulsed nothing at all).
+  const pulseFor = (type: CareEventType) => {
+    for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
+  }
+
   const triggerCue = (type: ActionCueType) => {
     // A fresh object every call, so pressing the same action type twice in a
     // row still re-fires AsciiCat's effect (unlike a bare string/primitive,
@@ -189,7 +197,7 @@ function App() {
   handleRemoteCareEventRef.current = (id, type) => {
     const applied = applyRemoteEvent(id, type)
     if (!applied) return false
-    for (const stat of CARE_EVENT_STATS[type]) pulse(stat)
+    pulseFor(type)
     if (type === 'feed' || type === 'clean' || type === 'play') triggerCue(type)
     if (type !== 'play') maybeShowActionFlavor(type)
     return true
@@ -197,7 +205,10 @@ function App() {
 
   const handlePetClick = () => {
     const applied = pet()
-    if (applied) maybeShowActionFlavor('pet')
+    if (applied) {
+      pulseFor('pet')
+      maybeShowActionFlavor('pet')
+    }
     return applied
   }
 
@@ -215,7 +226,7 @@ function App() {
 
   const handleSendNudge = async (text: string) => {
     playGame()
-    for (const stat of CARE_EVENT_STATS.play) pulse(stat)
+    pulseFor('play')
     triggerCue('play')
     setPlayPickerOpen(false)
     const status = await send(text, 'nudge')
@@ -246,7 +257,11 @@ function App() {
     dismissNotificationPrompt()
   }
 
-  const actionsDisabled = sleeping || playPickerOpen || messages.length > 0
+  // An overlay covers the whole card, so nothing behind it should stay
+  // operable. Belt and braces alongside useDialog's focus trap: the trap
+  // stops Tab reaching these, this stops them firing if it ever doesn't.
+  const overlayOpen = menuOpen || statsOpen
+  const actionsDisabled = sleeping || playPickerOpen || messages.length > 0 || overlayOpen
 
   return (
     <div className="game">
@@ -333,9 +348,9 @@ function App() {
       </div>
 
       <div className="actions">
-        <button onClick={() => { feed(); pulse('fullness'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
+        <button onClick={() => { feed(); pulseFor('feed'); triggerCue('feed'); maybeShowActionFlavor('feed') }} disabled={actionsDisabled}>[FEED]</button>
         <button onClick={() => setPlayPickerOpen(true)} disabled={actionsDisabled}>[PLAY]</button>
-        <button onClick={() => { clean(); pulse('cleanliness'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
+        <button onClick={() => { clean(); pulseFor('clean'); triggerCue('clean'); maybeShowActionFlavor('clean') }} disabled={actionsDisabled}>[CLEAN]</button>
         <button
           onClick={() => {
             const cue: ActionCueType = sleeping ? 'wake' : 'sleep'
@@ -343,7 +358,7 @@ function App() {
             triggerCue(cue)
             maybeShowActionFlavor(cue)
           }}
-          disabled={playPickerOpen || messages.length > 0}
+          disabled={playPickerOpen || messages.length > 0 || overlayOpen}
           className={sleeping ? 'active' : ''}
         >
           {sleeping ? '[WAKE]' : '[SLEEP]'}

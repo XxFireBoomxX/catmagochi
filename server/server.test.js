@@ -1,7 +1,7 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -725,5 +725,65 @@ describe('catmagochi relay server startup', () => {
       child.on('exit', (exitCode) => resolve([exitCode]))
     })
     assert.equal(code, 1)
+  })
+
+  // writeFileSync truncates before writing, so an OOM/redeploy/crash midway
+  // leaves half-written JSON. Every loader fell back to [] without a word,
+  // so the operator saw a healthy "relay listening" while the whole
+  // undelivered queue had just been dropped.
+  test('reports a corrupt data file instead of silently starting empty', async () => {
+    const PORT_C = 19084
+    const BASE_C = `http://localhost:${PORT_C}`
+    const dir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-corrupt-'))
+    writeFileSync(join(dir, 'messages.json'), '[{"id":"half-writ')
+    const child = spawn(process.execPath, ['server.js'], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: String(PORT_C), RELAY_TOKEN: TOKEN, DATA_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', (d) => { stderr += d })
+    try {
+      await waitForServer(BASE_C)
+      assert.match(stderr, /messages/i, 'expected the unreadable file to be reported on stderr')
+      // and it still serves rather than refusing to boot
+      const res = await fetch(`${BASE_C}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, text: 'still working' }),
+      })
+      assert.equal(res.status, 200)
+    } finally {
+      child.kill()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('persists via a temp file and leaves none behind', async () => {
+    const PORT_A = 19085
+    const BASE_A = `http://localhost:${PORT_A}`
+    const dir = mkdtempSync(join(tmpdir(), 'catmagochi-relay-atomic-'))
+    const child = spawn(process.execPath, ['server.js'], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: String(PORT_A), RELAY_TOKEN: TOKEN, DATA_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    try {
+      await waitForServer(BASE_A)
+      await fetch(`${BASE_A}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, text: 'atomic write' }),
+      })
+      const files = readdirSync(dir)
+      assert.ok(files.includes('messages.json'))
+      assert.deepEqual(files.filter((f) => f.endsWith('.tmp')), [], 'temp files should be renamed away')
+      // the committed file is complete, not a partial write
+      const parsed = JSON.parse(readFileSync(join(dir, 'messages.json'), 'utf-8'))
+      assert.equal(parsed[0].text, 'atomic write')
+    } finally {
+      child.kill()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

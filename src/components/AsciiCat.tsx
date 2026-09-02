@@ -162,7 +162,11 @@ export function AsciiCat({
         </div>
       )}
       <div
-        className={`ascii-screen${cueGlyph ? ' reacting' : ''}`}
+        // Alternating class, keyed off the glyph pop that every cue triggers:
+        // a repeated identical action produces the same cueGlyph string, so
+        // without a className that actually changes the browser has no reason
+        // to replay pet-bounce and the cat sits still on the second press.
+        className={`ascii-screen${cueGlyph ? ` reacting reacting-${(glyphPop?.key ?? 0) % 2}` : ''}`}
         role="button"
         tabIndex={0}
         aria-label={`Pet ${name}`}
