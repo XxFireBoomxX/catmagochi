@@ -25,7 +25,8 @@ const pick = <T,>(items: T[]): T => items[Math.floor(Math.random() * items.lengt
 type View = 'lesson' | 'result' | 'showoff'
 
 // Replaces AsciiCat in the shared panel slot while [PLAY] is open, the same
-// way NudgePicker did -- hence the shared `.ascii-screen` chrome.
+// way the nudge picker it replaced did -- hence the shared `.ascii-screen`
+// chrome.
 export function TrickPanel({
   name,
   onLessonDone,
