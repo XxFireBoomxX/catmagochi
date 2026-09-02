@@ -158,7 +158,19 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: config.token, text }),
         })
-        if (!res.ok) throw new Error((await res.json()).error || 'failed')
+        if (!res.ok) {
+          // A stored token that the relay rejects is never going to start
+          // working -- drop it so the next send asks again, instead of
+          // failing identically forever until someone finds [ change relay ].
+          if (res.status === 401) {
+            try {
+              localStorage.removeItem(CONFIG_KEY)
+            } catch {
+              // nothing stored to clear
+            }
+          }
+          throw new Error((await res.json()).error || 'failed')
+        }
         textEl.value = ''
         statusEl.textContent = 'sent!'
         statusEl.className = 'status ok'

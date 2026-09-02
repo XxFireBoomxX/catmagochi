@@ -29,7 +29,14 @@ function loadOutbox(): OutboxEntry[] {
 }
 
 function saveOutbox(entries: OutboxEntry[]) {
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries))
+  } catch {
+    // Quota exceeded, or storage blocked (private mode). The in-memory outbox
+    // still works for this session; losing the persisted copy costs a retry
+    // after a restart, which beats throwing out of the click handler that
+    // triggered the action.
+  }
 }
 
 export type SendStatus = 'sent' | 'queued' | 'unconfigured'

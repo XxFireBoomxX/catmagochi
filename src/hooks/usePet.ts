@@ -33,8 +33,12 @@ const STAT_KEYS: (keyof PetStats)[] = ['fullness', 'happiness', 'energy', 'clean
 // Valid JSON is not the same as a valid save. A parseable-but-wrong value
 // (an older shape, a hand-edited entry, another app on the same origin)
 // used to flow straight into applyElapsed() and throw on `stats.fullness`,
-// which blanks the screen with no in-app way to recover. Anything we can't
-// use starts the pet over instead.
+// which blanks the screen with no in-app way to recover.
+//
+// Scope is deliberately just the fields that can *crash* the app: `name` and
+// the four numeric stats. A bad `growth` or `adoptedAt` renders wrong (an odd
+// stage, "NaN days ago" in StatsWindow) but stays recoverable by playing, so
+// it isn't worth throwing a real pet away over.
 function isPetSaveShaped(value: unknown): value is Partial<PetSave> & { name: string; stats: PetStats } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const { name, stats } = value as { name?: unknown; stats?: unknown }

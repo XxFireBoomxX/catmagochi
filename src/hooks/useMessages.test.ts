@@ -300,6 +300,20 @@ describe('useMessages', () => {
       expect(JSON.parse(localStorage.getItem('catmagochi-message-outbox-v1') ?? '[]')).toEqual([])
     })
 
+    it('still sends when the outbox cannot be persisted', async () => {
+      fetchMock.mockResolvedValue({ ok: true })
+      const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useMessages())
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('QuotaExceededError')
+      })
+      let status: string | undefined
+      await act(async () => {
+        status = await result.current.send('Miss you', 'nudge')
+      })
+      expect(status).toBe('sent')
+    })
+
     it('resolves to "queued" and keeps the entry in the outbox when the send fails', async () => {
       fetchMock.mockRejectedValue(new Error('offline'))
       const useMessages = await loadUseMessages('wss://relay.test', 'tok')

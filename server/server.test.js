@@ -563,6 +563,43 @@ describe('catmagochi relay server', () => {
     }
   })
 
+  test('POST /push/subscribe accepts the legacy Chrome/GCM endpoint', async () => {
+    const endpoint = 'https://android.googleapis.com/gcm/send/legacy123'
+    const res = await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } } }),
+    })
+    assert.equal(res.status, 200)
+    await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, endpoint }),
+    })
+  })
+
+  // Stored so a push about something this device just did can skip it -- see
+  // pushTargets.js.
+  test('POST /push/subscribe records the subscribing device id', async () => {
+    const endpoint = 'https://push.example.test/with-device'
+    await fetch(`${BASE}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: TOKEN,
+        subscription: { endpoint, keys: { p256dh: 'k', auth: 'a' } },
+        device: 'device-a',
+      }),
+    })
+    const stored = JSON.parse(readFileSync(join(dataDir, 'subscriptions.json'), 'utf-8'))
+    assert.equal(stored.find((s) => s.subscription.endpoint === endpoint).device, 'device-a')
+    await fetch(`${BASE}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, endpoint }),
+    })
+  })
+
   test('POST /push/subscribe rejects a malformed subscription', async () => {
     const res = await fetch(`${BASE}/push/subscribe`, {
       method: 'POST',

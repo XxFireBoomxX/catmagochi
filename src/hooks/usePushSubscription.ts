@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { NotificationSettings } from './useNotificationSettings'
+import { getDeviceId } from '../data/deviceId'
 
 const RELAY_URL: string | undefined = import.meta.env.VITE_RELAY_URL
 const RELAY_TOKEN: string | undefined = import.meta.env.VITE_RELAY_TOKEN
@@ -9,7 +10,17 @@ const VAPID_PUBLIC_KEY: string | undefined = import.meta.env.VITE_VAPID_PUBLIC_K
 // plain HTTP(S) POST -- same host, different scheme.
 const HTTP_RELAY_URL = RELAY_URL?.replace(/^ws/, 'http')
 
-export type PushStatus = 'idle' | 'unsupported' | 'denied' | 'subscribed' | 'unsubscribed' | 'error'
+// 'rejected' is distinct from 'error': the relay refused this subscription
+// outright (an endpoint that isn't a known push service), so retrying or
+// checking your connection will never help.
+export type PushStatus =
+  | 'idle'
+  | 'unsupported'
+  | 'denied'
+  | 'subscribed'
+  | 'unsubscribed'
+  | 'rejected'
+  | 'error'
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -65,15 +76,26 @@ export function usePushSubscription(settings: NotificationSettings) {
           })
         }
 
-        await fetch(`${HTTP_RELAY_URL}/push/subscribe`, {
+        const res = await fetch(`${HTTP_RELAY_URL}/push/subscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token: RELAY_TOKEN,
             subscription: subscription.toJSON(),
             types: { message: settings.message, update: settings.update },
+            // Lets the relay skip pushing a note back to the device that
+            // sent it -- the in-app echo is already suppressed, so without
+            // this you get a notification that opens to nothing.
+            device: getDeviceId(),
           }),
         })
+        // Without this the relay's rejection was discarded and we reported
+        // success: the toggle read [ON] and push simply never worked, with
+        // nothing shown to the user and nothing logged.
+        if (!res.ok) {
+          setStatus('rejected')
+          return
+        }
         setStatus('subscribed')
       } catch {
         setStatus('error')

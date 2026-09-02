@@ -18,6 +18,8 @@ dist-ssr
 server/messages.json
 server/subscriptions.json
 server/care-events.json
+# left behind if a write is interrupted (see writeJsonAtomic)
+server/*.json.tmp
 coverage
 
 # Capacitor OTA release asset, built from dist/ and uploaded to the

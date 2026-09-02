@@ -19,6 +19,7 @@ const MENU_ITEMS: { label: string; view: MenuView }[] = [
 const PUSH_STATUS_TEXT: Partial<Record<PushStatus, string>> = {
   unsupported: "Push notifications aren't supported on this browser/device.",
   denied: 'Notifications are blocked — enable them in your browser/OS settings.',
+  rejected: "This device's push service isn't allowed by the relay. See PUSH_ALLOWED_HOSTS in server/README.md.",
   error: "Couldn't set up notifications. Check your connection and try again.",
 }
 

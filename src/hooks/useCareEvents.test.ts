@@ -246,6 +246,26 @@ describe('useCareEvents', () => {
       })
     })
 
+    // deviceId.ts already handles a throwing localStorage; the outbox sat
+    // right beside it and did not, so a quota/private-mode failure threw
+    // straight out of the click handler that fed the cat.
+    it('still sends the event when the outbox cannot be persisted', async () => {
+      fetchMock.mockResolvedValue({ ok: true })
+      const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+      const { result } = renderHook(() => useCareEvents(vi.fn(() => true)))
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('QuotaExceededError')
+      })
+      expect(() => {
+        act(() => {
+          result.current.emit('e1', 'feed')
+        })
+      }).not.toThrow()
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+    })
+
     it('keeps a failed send queued in localStorage for a later retry', async () => {
       fetchMock.mockRejectedValue(new Error('offline'))
       const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')

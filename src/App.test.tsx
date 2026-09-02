@@ -451,6 +451,26 @@ describe('App', () => {
       expect(fill).toHaveClass('pulsing')
     })
 
+    // The defect this guards: handleRemoteCareEventRef.current is assigned
+    // during render *after* the boot-splash and name-screen early returns, so
+    // it stays the default () => false while either is up. Reporting false is
+    // what keeps a partner's queued actions on the relay instead of acking
+    // them into oblivion during setup. Move that assignment above the early
+    // returns and every unit test still passes -- only this one fails.
+    it('does not ack a care event that arrives while the boot splash is up', () => {
+      seedSave()
+      render(<App />) // deliberately not renderApp(): stay on the splash
+      expect(screen.getByText(/booting/)).toBeInTheDocument()
+      expect(capturedOnCareEvent?.('during-splash', 'feed')).toBe(false)
+    })
+
+    it('does not ack a care event that arrives before the pet is named', () => {
+      localStorage.setItem('catmagochi-start-seen-v1', '1') // skip the splash
+      render(<App />)
+      expect(screen.getByText(/What should we name your new kitten/)).toBeInTheDocument()
+      expect(capturedOnCareEvent?.('before-adoption', 'feed')).toBe(false)
+    })
+
     // The handler's return value is the ack decision useCareEvents acts on.
     // A duplicate must still report true: it is dealt with, and leaving it
     // unacked means the relay replays it on every reconnect, forever.

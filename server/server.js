@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { WebSocketServer } from 'ws'
 import webpush from 'web-push'
+import { shouldPushTo } from './pushTargets.js'
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8080
 const RELAY_TOKEN = process.env.RELAY_TOKEN
@@ -37,8 +38,11 @@ if (!RELAY_TOKEN) {
 // matches that domain and any subdomain.
 const DEFAULT_PUSH_HOSTS = [
   'fcm.googleapis.com',
-  'updates.push.services.mozilla.com',
+  // Pre-FCM GCM endpoint, still emitted by older Chrome and some Android
+  // WebView/Chromium forks.
+  'android.googleapis.com',
   'web.push.apple.com',
+  // Covers updates.push.services.mozilla.com and its siblings.
   '.push.services.mozilla.com',
   '.notify.windows.com',
 ]
@@ -79,7 +83,11 @@ if (PUSH_ENABLED) {
 // redeploy midway through leaves half-written JSON on the volume -- and the
 // loader below then reads it as an empty queue. Writing to a sibling temp
 // file and renaming makes the swap atomic on the same filesystem: readers
-// see either the old file or the new one, never a partial one.
+// see either the old file or the new one, never a partial one. Note this is
+// atomicity, not durability -- there's no fsync before the rename, so a
+// *power* loss can still land the rename ahead of the data. That covers the
+// reported failure (crash / OOM / redeploy mid-write) and stops well short
+// of what a database would give you.
 function writeJsonAtomic(file, value) {
   const tmp = new URL(`${file.href}.tmp`)
   writeFileSync(tmp, JSON.stringify(value, null, 2))
@@ -122,12 +130,14 @@ function persistEvents() {
   writeJsonAtomic(EVENTS_FILE, pendingEvents)
 }
 
-// Sends a push to every subscriber who hasn't opted out of `type`. Prunes
+// Sends a push to every subscriber shouldPushTo() accepts -- which excludes
+// the device the notification is *about*, so you aren't notified of the note
+// you just sent. Prunes
 // subscriptions the push service reports as gone (404/410 -- uninstalled,
 // permission revoked, etc.) rather than retrying them forever.
-async function pushToSubscribers(type, payload) {
+async function pushToSubscribers(type, payload, originDevice = null) {
   if (!PUSH_ENABLED) return
-  const targets = subscriptions.filter((s) => s.types?.[type] !== false)
+  const targets = subscriptions.filter((s) => shouldPushTo(s, type, originDevice))
   const body = JSON.stringify({ type, ...payload })
   const stale = []
   await Promise.all(
@@ -214,7 +224,7 @@ const server = createServer((req, res) => {
         // silently replacing the first (showNotification with an existing
         // tag REPLACES it, and renotify defaults to false -- no second
         // buzz). update/attention keep coalescing by type on purpose.
-        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed, tag: `message-${message.id}` })
+        pushToSubscribers('message', { title: 'Catmagochi', body: trimmed, tag: `message-${message.id}` }, message.origin)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, id: message.id }))
       } catch {
@@ -228,7 +238,7 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/push/subscribe') {
     setCors(res)
     readJsonBody(req).then(
-      ({ token, subscription, types }) => {
+      ({ token, subscription, types, device }) => {
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -245,7 +255,13 @@ const server = createServer((req, res) => {
           return
         }
         subscriptions = subscriptions.filter((s) => s.subscription.endpoint !== subscription.endpoint)
-        subscriptions.push({ subscription, types: types && typeof types === 'object' ? types : {} })
+        subscriptions.push({
+          subscription,
+          types: types && typeof types === 'object' ? types : {},
+          // Absent for a client from before device ids; such a subscriber
+          // simply never matches an origin and keeps receiving everything.
+          device: typeof device === 'string' && device ? device : undefined,
+        })
         persistSubscriptions()
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, pushEnabled: PUSH_ENABLED }))

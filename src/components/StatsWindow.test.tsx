@@ -109,12 +109,19 @@ describe('StatsWindow', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
-    it('keeps focus on its only control when tabbing', () => {
-      render(<StatsWindow open save={baseSave} mood="happy" stage="young" onClose={() => {}} />)
-      const close = screen.getByText('[ CLOSE ]')
-      close.focus()
+    // Asserting that Tab *stays* on the only control would hold with or
+    // without the trap, since jsdom doesn't move focus itself. Starting from
+    // outside the panel is the version that actually fails without useDialog.
+    it('pulls focus back into the panel when it has escaped', () => {
+      render(
+        <>
+          <button>behind the overlay</button>
+          <StatsWindow open save={baseSave} mood="happy" stage="young" onClose={() => {}} />
+        </>,
+      )
+      screen.getByText('behind the overlay').focus()
       fireEvent.keyDown(document, { key: 'Tab' })
-      expect(document.activeElement).toBe(close)
+      expect(document.activeElement).toBe(screen.getByText('[ CLOSE ]'))
     })
   })
 

@@ -20,8 +20,13 @@ export function getDeviceId(): string {
     localStorage.setItem(DEVICE_ID_KEY, id)
     return id
   } catch {
-    // A per-session id still suppresses echoes for as long as the app is open.
-    fallbackId ??= crypto.randomUUID()
+    // A per-session id still suppresses echoes for as long as the app is
+    // open. Deliberately not crypto.randomUUID(): that is one of the things
+    // that can land us here (it's undefined outside a secure context), and
+    // retrying it from the catch would throw again, uncaught, out of the
+    // WebSocket connect() that asked for the id. This only has to differ
+    // from the other device's id, so a non-crypto value is fine.
+    fallbackId ??= `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
     return fallbackId
   }
 }

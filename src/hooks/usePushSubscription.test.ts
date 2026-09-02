@@ -80,6 +80,7 @@ describe('usePushSubscription', () => {
       token: 'tok',
       subscription: { endpoint: 'https://push.example.test/abc', keys: { p256dh: 'x', auth: 'y' } },
       types: { message: true, update: true },
+      device: expect.any(String),
     })
   })
 
@@ -130,6 +131,19 @@ describe('usePushSubscription', () => {
     await act(async () => {})
     expect(result.current.status).toBe('unsubscribed')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  // The relay rejects an endpoint that isn't a known push service. Without a
+  // res.ok check that 400 was discarded and the hook reported 'subscribed':
+  // the toggle read [ON], the OS permission was granted, and push silently
+  // never worked, with nothing shown anywhere.
+  it('reports a rejected subscription rather than claiming success', async () => {
+    const usePushSubscription = await loadUsePushSubscription('wss://relay.test', 'tok', 'BAvapidkey')
+    const { fetchMock } = setupBrowserMocks()
+    fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'unsupported push endpoint' }) })
+    const { result } = renderHook(() => usePushSubscription(enabledSettings))
+    await act(async () => {})
+    expect(result.current.status).toBe('rejected')
   })
 
   it('reports error when subscribing throws', async () => {

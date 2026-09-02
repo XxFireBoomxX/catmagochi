@@ -259,9 +259,11 @@ function App() {
     dismissNotificationPrompt()
   }
 
-  // An overlay covers the whole card, so nothing behind it should stay
-  // operable. Belt and braces alongside useDialog's focus trap: the trap
-  // stops Tab reaching these, this stops them firing if it ever doesn't.
+  // Belt and braces alongside useDialog's focus trap, for the care actions
+  // specifically. The overlay blocks pointers and the trap blocks Tab, so
+  // this is the third line of defence, not the first -- and it is deliberately
+  // partial: the cat, the stage badge, the name button and [MENU] stay
+  // enabled behind the overlay because nothing can reach them either way.
   const overlayOpen = menuOpen || statsOpen
   const actionsDisabled = sleeping || playPickerOpen || messages.length > 0 || overlayOpen
 
