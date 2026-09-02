@@ -113,6 +113,19 @@ describe('useCareEvents', () => {
     expect(ws.sent).toEqual([])
   })
 
+  // A redelivered event the app has already applied is dealt with -- it has
+  // to be acked, or it comes back on every single reconnect.
+  it('acks an event the app reports it has already applied', async () => {
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    renderHook(() => useCareEvents(vi.fn(() => true)))
+    const ws = MockWebSocket.instances[0]
+    ws.readyState = MockWebSocket.OPEN
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'care-event', id: 'e-dup', eventType: 'feed', sentAt: 1 }) })
+    })
+    expect(ws.sent).toEqual([JSON.stringify({ type: 'ack', id: 'e-dup' })])
+  })
+
   it('does not ack when the socket is not open', async () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
     const onEvent = vi.fn(() => true)

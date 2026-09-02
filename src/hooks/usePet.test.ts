@@ -522,11 +522,11 @@ describe('usePet', () => {
         result.current.applyRemoteEvent('evt-dup', 'clean')
       })
       expect(result.current.save?.growth).toBe(2)
-      let secondResult: boolean | undefined
+      let secondResult: string | undefined
       act(() => {
         secondResult = result.current.applyRemoteEvent('evt-dup', 'clean')
       })
-      expect(secondResult).toBe(false)
+      expect(secondResult).toBe('duplicate')
       expect(result.current.save?.growth).toBe(2)
     })
 
@@ -538,11 +538,11 @@ describe('usePet', () => {
       const emittedId = onCareEvent.mock.calls[0][0] as string
       expect(result.current.save?.growth).toBe(3)
 
-      let echoApplied: boolean | undefined
+      let echoApplied: string | undefined
       act(() => {
         echoApplied = result.current.applyRemoteEvent(emittedId, 'feed')
       })
-      expect(echoApplied).toBe(false)
+      expect(echoApplied).toBe('duplicate')
       expect(result.current.save?.growth).toBe(3)
     })
 
@@ -557,16 +557,38 @@ describe('usePet', () => {
       expect(result.current.save?.totalPets).toBe(1)
     })
 
-    // Reports false so useCareEvents leaves the event unacked and the relay
+    // "Already applied" and "cannot apply yet" both mean "don't re-run the
+    // deltas", but they mean opposite things to the relay: a duplicate is
+    // dealt with and must be acked away, while an event that arrived before
+    // there was a pet must stay queued. Collapsing both to false left a
+    // redelivered event unackable, so it replayed on every reconnect forever.
+    it('distinguishes a duplicate from an event it could not apply', () => {
+      const { result } = renderHook(() => usePet())
+      act(() => result.current.createPet('Remote'))
+      let first: string | undefined
+      let second: string | undefined
+      act(() => {
+        first = result.current.applyRemoteEvent('evt-once', 'clean')
+      })
+      act(() => {
+        second = result.current.applyRemoteEvent('evt-once', 'clean')
+      })
+      expect(first).toBe('applied')
+      expect(second).toBe('duplicate')
+      // applied exactly once regardless
+      expect(result.current.save?.growth).toBe(2)
+    })
+
+    // Reports 'no-pet' so useCareEvents leaves the event unacked and the relay
     // replays it once a pet actually exists -- otherwise a partner's queued
     // actions are silently destroyed while the name screen is up.
     it('reports not-applied and leaves nothing behind when there is no save yet', () => {
       const { result } = renderHook(() => usePet())
-      let applied: boolean | undefined
+      let applied: string | undefined
       act(() => {
         applied = result.current.applyRemoteEvent('evt-nosave', 'feed')
       })
-      expect(applied).toBe(false)
+      expect(applied).toBe('no-pet')
       expect(result.current.save).toBeNull()
     })
 
@@ -576,11 +598,11 @@ describe('usePet', () => {
         result.current.applyRemoteEvent('evt-later', 'feed')
       })
       act(() => result.current.createPet('Mochi'))
-      let applied: boolean | undefined
+      let applied: string | undefined
       act(() => {
         applied = result.current.applyRemoteEvent('evt-later', 'feed')
       })
-      expect(applied).toBe(true)
+      expect(applied).toBe('applied')
       expect(result.current.save?.totalFeeds).toBe(1)
     })
 

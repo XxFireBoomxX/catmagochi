@@ -195,8 +195,10 @@ function App() {
   // is false for a dedup'd echo of our own action or an already-seen event
   // replayed after reconnect, which should stay silent.
   handleRemoteCareEventRef.current = (id, type) => {
-    const applied = applyRemoteEvent(id, type)
-    if (!applied) return false
+    const result = applyRemoteEvent(id, type)
+    // A duplicate gets no reactions (it changed nothing) but must still be
+    // acked, or the relay replays it on every reconnect.
+    if (result !== 'applied') return result === 'duplicate'
     pulseFor(type)
     if (type === 'feed' || type === 'clean' || type === 'play') triggerCue(type)
     if (type !== 'play') maybeShowActionFlavor(type)

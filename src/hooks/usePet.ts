@@ -146,6 +146,11 @@ export function deriveMood(stats: PetStats, sleeping: boolean): Mood {
 
 export type OnCareEvent = (id: string, type: CareEventType) => void
 
+// What happened to an inbound event from another device. 'applied' and
+// 'duplicate' both mean "the relay can drop it"; only 'no-pet' means "keep
+// it queued and send it again". See applyRemoteEvent.
+export type RemoteEventResult = 'applied' | 'duplicate' | 'no-pet'
+
 export function usePet(onCareEvent?: OnCareEvent) {
   const [save, setSave] = useState<PetSave | null>(() => {
     const existing = loadSave()
@@ -245,16 +250,20 @@ export function usePet(onCareEvent?: OnCareEvent) {
   // skips the `sleeping` gate local actions have -- sleeping is a
   // per-device UI toggle, not synced state, so it shouldn't block a
   // remote party's actions from landing here.
-  const applyRemoteEvent = useCallback((id: string, type: CareEventType) => {
-    // No pet yet (boot splash, name screen): report not-applied and do *not*
+  const applyRemoteEvent = useCallback((id: string, type: CareEventType): RemoteEventResult => {
+    // No pet yet (boot splash, name screen). Report it unhandled and do *not*
     // claim the id, so useCareEvents leaves it unacked and the relay replays
     // it once there's actually a cat to apply it to. Claiming it here would
     // silently destroy a partner's queued actions during setup.
-    if (!saveRef.current) return false
-    if (appliedEventIds.current.has(id)) return false
+    if (!saveRef.current) return 'no-pet'
+    // Already applied -- don't run the deltas again, but this event *is*
+    // dealt with, so the caller must still ack it away. Reporting it the
+    // same as 'no-pet' would leave a redelivered event unackable and it
+    // would come back on every reconnect, forever.
+    if (appliedEventIds.current.has(id)) return 'duplicate'
     appliedEventIds.current.add(id)
     setSave((current) => (current ? applyCareEvent(current, type) : current))
-    return true
+    return 'applied'
   }, [])
 
   const receiveMessage = useCallback(() => {

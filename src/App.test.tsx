@@ -26,9 +26,9 @@ vi.mock('./hooks/useFlavorText', () => ({
 // Capturing onEvent lets tests simulate an event arriving from another
 // device by just calling it directly, without a real WebSocket.
 const mockEmit = vi.fn()
-let capturedOnCareEvent: ((id: string, type: CareEventType) => void) | null = null
+let capturedOnCareEvent: ((id: string, type: CareEventType) => boolean) | null = null
 vi.mock('./hooks/useCareEvents', () => ({
-  useCareEvents: (onEvent: (id: string, type: CareEventType) => void) => {
+  useCareEvents: (onEvent: (id: string, type: CareEventType) => boolean) => {
     capturedOnCareEvent = onEvent
     return { emit: mockEmit }
   },
@@ -449,6 +449,26 @@ describe('App', () => {
       expect(getSave().growth).toBe(3)
       const fill = screen.getByRole('progressbar', { name: 'Fullness' }).querySelector('.stat-fill')
       expect(fill).toHaveClass('pulsing')
+    })
+
+    // The handler's return value is the ack decision useCareEvents acts on.
+    // A duplicate must still report true: it is dealt with, and leaving it
+    // unacked means the relay replays it on every reconnect, forever.
+    it('tells the relay to drop a redelivered event it has already applied', () => {
+      seedSave()
+      renderApp()
+      let first: boolean | undefined
+      let second: boolean | undefined
+      act(() => {
+        first = capturedOnCareEvent?.('remote-dup', 'feed')
+      })
+      act(() => {
+        second = capturedOnCareEvent?.('remote-dup', 'feed')
+      })
+      expect(first).toBe(true)
+      expect(second).toBe(true)
+      // ...but the deltas ran exactly once
+      expect(getSave().totalFeeds).toBe(1)
     })
 
     it('shows the same reaction glyph for a remote feed as a local one', () => {
