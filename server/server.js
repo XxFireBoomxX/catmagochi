@@ -136,7 +136,7 @@ const server = createServer((req, res) => {
     req.on('end', () => {
       setCors(res)
       try {
-        const { token, text, kind, id } = JSON.parse(body)
+        const { token, text, kind, id, origin } = JSON.parse(body)
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -153,6 +153,8 @@ const server = createServer((req, res) => {
           text: trimmed,
           sentAt: Date.now(),
           kind: MESSAGE_KINDS.has(kind) ? kind : undefined,
+          // Absent for sender.html, which has no WebSocket to be echoed to.
+          origin: typeof origin === 'string' && origin ? origin : undefined,
         }
         // No id-dedup on push -- a client-retried id (see useMessages.ts's
         // outbox) becomes a second pending entry here even if the first
@@ -164,7 +166,7 @@ const server = createServer((req, res) => {
         // personal-scale relay.
         pending.push(message)
         persist()
-        broadcast(message)
+        broadcastRecord('message', message)
         pushToSubscribers('message', { title: 'Catmagochi', body: trimmed })
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true, id: message.id }))
@@ -258,7 +260,7 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/care-event') {
     setCors(res)
     readJsonBody(req).then(
-      ({ token, id, type }) => {
+      ({ token, id, type, origin }) => {
         if (token !== RELAY_TOKEN) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'invalid token' }))
@@ -273,10 +275,11 @@ const server = createServer((req, res) => {
           id,
           eventType: type,
           sentAt: Date.now(),
+          origin: typeof origin === 'string' && origin ? origin : undefined,
         }
         pendingEvents.push(event)
         persistEvents()
-        broadcastEvent(event)
+        broadcastRecord('care-event', event)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true }))
       },
@@ -294,17 +297,30 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true })
 
-function broadcast(message) {
-  const frame = JSON.stringify({ type: 'message', ...message })
-  for (const client of wss.clients) {
-    if (client.readyState === client.OPEN) client.send(frame)
-  }
+// `origin` is delivery bookkeeping, not part of the wire contract -- clients
+// tag what they send so we can route it, but never see the field come back.
+function frameFor(type, record) {
+  const rest = { ...record }
+  delete rest.origin
+  return JSON.stringify({ type, ...rest })
 }
 
-function broadcastEvent(event) {
-  const frame = JSON.stringify({ type: 'care-event', ...event })
+// A device never receives what it sent itself. It already applied the action
+// locally, and because `pending`/`pendingEvents` are a single shared queue
+// drained by the *first* ack from any client, a sender acking its own echo
+// would delete the item before the other device ever connected -- destroying
+// exactly the offline delivery the queue exists to provide.
+//
+// An item with no origin (e.g. sender.html, which has no WebSocket of its
+// own) belongs to no device and goes to everyone.
+function isOwnEcho(record, ws) {
+  return Boolean(record.origin) && ws.deviceId === record.origin
+}
+
+function broadcastRecord(type, record) {
+  const frame = frameFor(type, record)
   for (const client of wss.clients) {
-    if (client.readyState === client.OPEN) client.send(frame)
+    if (client.readyState === client.OPEN && !isOwnEcho(record, client)) client.send(frame)
   }
 }
 
@@ -314,7 +330,12 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy()
     return
   }
+  // Which device this socket belongs to, so we can skip echoing back what it
+  // sent itself. Absent for any client that doesn't identify itself, which
+  // simply means it receives everything.
+  const deviceId = url.searchParams.get('device') || null
   wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.deviceId = deviceId
     wss.emit('connection', ws, req)
   })
 })
@@ -324,10 +345,10 @@ wss.on('connection', (ws) => {
   ws.on('pong', () => { ws.isAlive = true })
 
   for (const message of pending) {
-    ws.send(JSON.stringify({ type: 'message', ...message }))
+    if (!isOwnEcho(message, ws)) ws.send(frameFor('message', message))
   }
   for (const event of pendingEvents) {
-    ws.send(JSON.stringify({ type: 'care-event', ...event }))
+    if (!isOwnEcho(event, ws)) ws.send(frameFor('care-event', event))
   }
 
   ws.on('message', (data) => {

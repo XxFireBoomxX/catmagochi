@@ -41,10 +41,15 @@ async function loadUseMessages(url: string, token: string) {
   return mod.useMessages
 }
 
+const DEVICE_ID_KEY = 'catmagochi-device-id-v1'
+
 describe('useMessages', () => {
   beforeEach(() => {
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket)
+    // Pin the device id so wire-format assertions stay deterministic; without
+    // this getDeviceId() mints a fresh UUID per test.
+    localStorage.setItem(DEVICE_ID_KEY, 'test-device')
   })
 
   afterEach(() => {
@@ -68,7 +73,14 @@ describe('useMessages', () => {
     const useMessages = await loadUseMessages('wss://relay.test', 'secret-token')
     renderHook(() => useMessages())
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token')
+    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token&device=test-device')
+  })
+
+  it('identifies this device on connect so the relay can skip echoing its own sends back', async () => {
+    localStorage.setItem(DEVICE_ID_KEY, 'another-device')
+    const useMessages = await loadUseMessages('wss://relay.test', 'tok')
+    renderHook(() => useMessages())
+    expect(MockWebSocket.instances[0].url).toContain('device=another-device')
   })
 
   it('adds an incoming message frame to state', async () => {
@@ -281,6 +293,8 @@ describe('useMessages', () => {
       expect(sentBody.token).toBe('tok')
       expect(sentBody.text).toBe('Thinking of you')
       expect(sentBody.kind).toBe('nudge')
+      // Lets the relay skip handing this note back to us -- see deviceId.ts.
+      expect(sentBody.origin).toBe('test-device')
       expect(typeof sentBody.id).toBe('string')
       expect(sentBody.id.length).toBeGreaterThan(0)
       expect(JSON.parse(localStorage.getItem('catmagochi-message-outbox-v1') ?? '[]')).toEqual([])
@@ -334,7 +348,15 @@ describe('useMessages', () => {
         expect(fetchMock).toHaveBeenCalledWith(
           'https://relay.test/send',
           expect.objectContaining({
-            body: JSON.stringify({ token: 'tok', id: 'stale-1', text: 'left over', kind: undefined }),
+            // A flush after a restart still carries our origin, so the relay
+            // does not hand this back to us as an incoming note.
+            body: JSON.stringify({
+              token: 'tok',
+              id: 'stale-1',
+              text: 'left over',
+              kind: undefined,
+              origin: 'test-device',
+            }),
           }),
         )
       })

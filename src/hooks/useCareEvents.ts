@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { CareEventType } from '../types'
+import { getDeviceId } from '../data/deviceId'
 
 const RELAY_URL: string | undefined = import.meta.env.VITE_RELAY_URL
 const RELAY_TOKEN: string | undefined = import.meta.env.VITE_RELAY_TOKEN
@@ -70,7 +71,15 @@ export function useCareEvents(onEvent: CareEventHandler) {
           const res = await fetch(`${HTTP_RELAY_URL}/care-event`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: RELAY_TOKEN, id: next.id, type: next.type }),
+            // origin lets the relay skip handing this straight back to us --
+            // we already applied it locally, and acking our own echo would
+            // drain it from the shared queue before the other device connects.
+            body: JSON.stringify({
+              token: RELAY_TOKEN,
+              id: next.id,
+              type: next.type,
+              origin: getDeviceId(),
+            }),
           })
           if (!res.ok) break
           outbox.current = outbox.current.slice(1)
@@ -91,7 +100,9 @@ export function useCareEvents(onEvent: CareEventHandler) {
     let stopped = false
 
     const connect = () => {
-      const ws = new WebSocket(`${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}`)
+      const ws = new WebSocket(
+        `${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}&device=${encodeURIComponent(getDeviceId())}`,
+      )
       wsRef.current = ws
 
       ws.onopen = () => {

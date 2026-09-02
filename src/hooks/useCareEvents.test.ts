@@ -32,6 +32,7 @@ class MockWebSocket {
 }
 
 const OUTBOX_KEY = 'catmagochi-care-outbox-v1'
+const DEVICE_ID_KEY = 'catmagochi-device-id-v1'
 
 async function loadUseCareEvents(url: string, token: string) {
   vi.resetModules()
@@ -47,6 +48,9 @@ describe('useCareEvents', () => {
   beforeEach(() => {
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket)
+    // Pin the device id so wire-format assertions stay deterministic; without
+    // this getDeviceId() mints a fresh UUID per test.
+    localStorage.setItem(DEVICE_ID_KEY, 'test-device')
   })
 
   afterEach(() => {
@@ -69,7 +73,14 @@ describe('useCareEvents', () => {
     const useCareEvents = await loadUseCareEvents('wss://relay.test', 'secret-token')
     renderHook(() => useCareEvents(vi.fn()))
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token')
+    expect(MockWebSocket.instances[0].url).toBe('wss://relay.test/ws?token=secret-token&device=test-device')
+  })
+
+  it('identifies this device on connect so the relay can skip echoing its own events back', async () => {
+    localStorage.setItem(DEVICE_ID_KEY, 'another-device')
+    const useCareEvents = await loadUseCareEvents('wss://relay.test', 'tok')
+    renderHook(() => useCareEvents(vi.fn()))
+    expect(MockWebSocket.instances[0].url).toContain('device=another-device')
   })
 
   it('applies an incoming care-event frame and acks it', async () => {
@@ -195,7 +206,8 @@ describe('useCareEvents', () => {
           'https://relay.test/care-event',
           expect.objectContaining({
             method: 'POST',
-            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed' }),
+            // origin lets the relay skip echoing this back -- see deviceId.ts
+            body: JSON.stringify({ token: 'tok', id: 'e1', type: 'feed', origin: 'test-device' }),
           }),
         )
       })
@@ -285,7 +297,10 @@ describe('useCareEvents', () => {
         expect(fetchMock).toHaveBeenCalledWith(
           'https://relay.test/care-event',
           expect.objectContaining({
-            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet' }),
+            // A flush after a restart still carries our origin -- this is
+            // what stops the event being echoed back and double-applied once
+            // the in-memory appliedEventIds set is gone.
+            body: JSON.stringify({ token: 'tok', id: 'stale', type: 'pet', origin: 'test-device' }),
           }),
         )
       })

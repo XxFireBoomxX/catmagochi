@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RelayMessage } from '../types'
+import { getDeviceId } from '../data/deviceId'
 
 const RELAY_URL: string | undefined = import.meta.env.VITE_RELAY_URL
 const RELAY_TOKEN: string | undefined = import.meta.env.VITE_RELAY_TOKEN
@@ -50,7 +51,16 @@ export function useMessages() {
       const res = await fetch(`${HTTP_RELAY_URL}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: RELAY_TOKEN, id: entry.id, text: entry.text, kind: entry.kind }),
+        // origin keeps the relay from showing us the note we just sent (see
+        // deviceId.ts) -- dismissing that echo would ack it off the shared
+        // queue before an offline partner ever received it.
+        body: JSON.stringify({
+          token: RELAY_TOKEN,
+          id: entry.id,
+          text: entry.text,
+          kind: entry.kind,
+          origin: getDeviceId(),
+        }),
       })
       if (!res.ok) return false
       outbox.current = outbox.current.filter((e) => e.id !== entry.id)
@@ -85,7 +95,9 @@ export function useMessages() {
     let stopped = false
 
     const connect = () => {
-      const ws = new WebSocket(`${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}`)
+      const ws = new WebSocket(
+        `${RELAY_URL}/ws?token=${encodeURIComponent(RELAY_TOKEN)}&device=${encodeURIComponent(getDeviceId())}`,
+      )
       wsRef.current = ws
 
       ws.onopen = () => {

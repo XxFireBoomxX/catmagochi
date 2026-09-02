@@ -386,6 +386,111 @@ describe('catmagochi relay server', () => {
     wsB.close()
   })
 
+  // A device tags what it sends with its own `origin` id and identifies
+  // itself on connect with `?device=`. The relay never hands an item back to
+  // the device that sent it: the sender already applied it locally, and an
+  // echo it acked would drain the shared queue before the *other* device ever
+  // connected -- which is exactly what the queue exists to prevent.
+  function connect(deviceId) {
+    const query = deviceId ? `?token=${TOKEN}&device=${deviceId}` : `?token=${TOKEN}`
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws${query}`)
+    ws.frames = []
+    ws.onmessage = (e) => ws.frames.push(JSON.parse(e.data))
+    return new Promise((resolve, reject) => {
+      ws.onopen = () => resolve(ws)
+      ws.onerror = reject
+    })
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 150))
+
+  // Same wire ack as ackMessage above -- the server drains both queues by id.
+  const ackEvent = (id) => ackMessage(id)
+
+  test('a care event is not echoed back to the device that sent it', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-no-echo', type: 'feed', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.deepEqual(wsA.frames, [])
+    wsA.close()
+    await ackEvent('evt-no-echo')
+  })
+
+  test('a care event still reaches a second device that only connects later', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-offline-partner', type: 'feed', origin: 'device-a' }),
+    })
+    await settle()
+
+    // device-b was offline for the send and only connects afterwards
+    const wsB = await connect('device-b')
+    await settle()
+
+    assert.deepEqual(
+      wsB.frames.map((f) => f.id),
+      ['evt-offline-partner'],
+    )
+    wsB.send(JSON.stringify({ type: 'ack', id: 'evt-offline-partner' }))
+    await settle()
+    wsA.close()
+    wsB.close()
+  })
+
+  test('a message is not echoed back to the device that sent it', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'msg-no-echo', text: 'Thinking of you', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.deepEqual(wsA.frames, [])
+    wsA.close()
+    await ackMessage('msg-no-echo')
+  })
+
+  test('a message with no origin (sender.html) still reaches every device', async () => {
+    const wsA = await connect('device-a')
+    await fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'msg-from-sender-page', text: 'hello from home' }),
+    })
+    await settle()
+
+    assert.deepEqual(
+      wsA.frames.map((f) => f.text),
+      ['hello from home'],
+    )
+    wsA.close()
+    await ackMessage('msg-from-sender-page')
+  })
+
+  test('the origin id is kept server-side rather than broadcast to clients', async () => {
+    const wsB = await connect('device-b')
+    await fetch(`${BASE}/care-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, id: 'evt-origin-hidden', type: 'pet', origin: 'device-a' }),
+    })
+    await settle()
+
+    assert.equal(wsB.frames.length, 1)
+    assert.ok(!('origin' in wsB.frames[0]))
+    wsB.send(JSON.stringify({ type: 'ack', id: 'evt-origin-hidden' }))
+    await settle()
+    wsB.close()
+  })
+
   const fakeSubscription = {
     endpoint: 'https://push.example.test/fake-endpoint',
     keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' },
