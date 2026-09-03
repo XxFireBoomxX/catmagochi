@@ -33,9 +33,10 @@ export interface RelayMessage {
   id: string
   text: string
   sentAt: number
-  // Present for a canned "PLAY" nudge (see NudgePicker); absent for a
-  // freely-typed note sent from sender.html. Lets the dismiss handler
-  // skip the generic receiveMessage() bonus for nudges, since those
-  // already reward the shared cat via the 'play' care event at send time.
+  // Present for a canned "PLAY" nudge. Nothing in this app sends one any
+  // more -- [PLAY] is a trick lesson now -- but a relay may still hold
+  // nudge-kind messages sent by an older build, and the dismiss handler
+  // skips the generic receiveMessage() bonus for them, since those already
+  // rewarded the shared cat via the 'play' care event at send time.
   kind?: 'nudge'
 }

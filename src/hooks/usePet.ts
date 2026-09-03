@@ -119,10 +119,11 @@ function applyCareEvent(save: PetSave, type: CareEventType): PetSave {
         stats: { ...save.stats, happiness: clamp(save.stats.happiness + 3) },
       }
     case 'play':
-      // A quick "thinking of you" nudge (see NudgePicker), not a skill-based
-      // mini-game anymore -- a flat reward like every other action, weighted
-      // toward happiness since that's the point of it. Light costs elsewhere
-      // keep it from being a strictly-better feed/clean substitute.
+      // One day's trick lesson (see TrickPanel), not a skill-based mini-game
+      // and no longer a nudge either -- a flat reward like every other action,
+      // weighted toward happiness since that's the point of it. Light costs
+      // elsewhere keep it from being a strictly-better feed/clean substitute.
+      // Rationed to once a day by useTricks, not by anything here.
       return {
         ...save,
         growth: save.growth + 3,

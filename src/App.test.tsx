@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { START_TOTAL_MS } from './components/StartScreen'
 import type { CareEventType, PetSave, RelayMessage } from './types'
+import { TRICKS } from './data/tricks'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const NOW = new Date('2026-01-01T00:00:00.000Z').getTime()
@@ -11,6 +12,8 @@ let mockMessages: RelayMessage[] = []
 const mockDismiss = vi.fn((id: string) => {
   mockMessages = mockMessages.filter((m) => m.id !== id)
 })
+// App no longer calls send() -- the nudge is gone -- but useMessages still
+// exports it (kept for a future relay), so the mock mirrors the real shape.
 const mockSend = vi.fn()
 vi.mock('./hooks/useMessages', () => ({
   useMessages: () => ({ messages: mockMessages, dismiss: mockDismiss, send: mockSend }),
@@ -316,39 +319,63 @@ describe('App', () => {
     })
   })
 
-  describe('play / nudge picker', () => {
-    it('opens the nudge picker in place of the cat, and disables other actions', () => {
+  describe('play / trick lesson', () => {
+    it('opens the trick panel in place of the cat, and disables other actions', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
+      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
       expect(screen.getByText('[FEED]')).toBeDisabled()
       expect(screen.getByText('[CLEAN]')).toBeDisabled()
       expect(screen.getByText('[PLAY]')).toBeDisabled()
     })
 
-    it('picking a nudge applies the play reward, sends it, and restores the cat panel', () => {
+    it('a lesson applies the play reward exactly once', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByText('Miss you'))
+      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
       expect(getSave().stats.happiness).toBe(90)
       expect(getSave().growth).toBe(3)
       expect(getSave().totalPlays).toBe(1)
-      expect(mockSend).toHaveBeenCalledWith('Miss you', 'nudge')
-      expect(screen.getByRole('button', { name: 'Pet Mochi' })).toBeInTheDocument()
-      expect(screen.getByText('[FEED]')).not.toBeDisabled()
     })
 
-    it('cancel closes the picker without applying anything or sending', () => {
+    it('stays open on the result rather than snapping back to the cat', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByText('[ CANCEL ]'))
+      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
+      expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument()
+    })
+
+    it('back closes the panel without spending the lesson', () => {
+      seedSave()
+      renderApp()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      fireEvent.click(screen.getByRole('button', { name: /back/i }))
       expect(getSave().growth).toBe(0)
-      expect(mockSend).not.toHaveBeenCalled()
       expect(screen.getByRole('button', { name: 'Pet Mochi' })).toBeInTheDocument()
+      // and the lesson is still there tomorrow-morning fresh
+      fireEvent.click(screen.getByText('[PLAY]'))
+      expect(screen.getByRole('button', { name: /wait quietly/i })).toBeInTheDocument()
+    })
+
+    // Performing is unlimited, so it must not double as a stat faucet.
+    it('performing a learned trick changes no stats', () => {
+      seedSave()
+      localStorage.setItem(
+        'catmagochi-tricks-v1',
+        JSON.stringify({ currentTrickId: TRICKS[1].id, progress: 0, learned: [TRICKS[0].id], lastLessonDay: '2026-01-01' }),
+      )
+      renderApp()
+      const before = getSave()
+      fireEvent.click(screen.getByText('[PLAY]'))
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(TRICKS[0].name, 'i') }))
+      expect(getSave().stats).toEqual(before.stats)
+      expect(getSave().growth).toBe(before.growth)
+      expect(mockEmit).not.toHaveBeenCalled()
     })
   })
 
@@ -362,11 +389,11 @@ describe('App', () => {
       expect(screen.getByText('[FEED]')).toBeDisabled()
     })
 
-    it('does not let an incoming message interrupt an open nudge picker', () => {
+    it('does not let an incoming message interrupt an open trick lesson', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
+      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
 
       // Queue a message while the picker is open and force a re-render via
       // usePet's own tick (the mocked useMessages hook only re-reads this on
@@ -376,7 +403,7 @@ describe('App', () => {
         vi.advanceTimersByTime(5_000) // usePet's TICK_MS
       })
 
-      expect(screen.getByText('Thinking of you')).toBeInTheDocument()
+      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
       expect(screen.queryByText('hi from home')).not.toBeInTheDocument()
     })
 
@@ -430,11 +457,11 @@ describe('App', () => {
       expect(mockEmit.mock.calls[0][1]).toBe('pet')
     })
 
-    it('emits a care event when a nudge is picked', () => {
+    it('emits exactly one play care event for a lesson', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByText('Thinking of you'))
+      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
       expect(mockEmit).toHaveBeenCalledTimes(1)
       expect(mockEmit.mock.calls[0][1]).toBe('play')
     })
@@ -541,57 +568,6 @@ describe('App', () => {
         capturedOnCareEvent?.('remote-1', 'clean')
       })
       expect(mockEmit).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('nudge send feedback', () => {
-    it('shows "Sent." when the send resolves to sent', async () => {
-      mockSend.mockResolvedValue('sent')
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
-      })
-      expect(screen.getByText('Sent.')).toBeInTheDocument()
-    })
-
-    it('shows the queued message when the send resolves to queued', async () => {
-      mockSend.mockResolvedValue('queued')
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
-      })
-      expect(screen.getByText('Saved — will send when back online.')).toBeInTheDocument()
-    })
-
-    it('shows nothing when the send resolves to unconfigured', async () => {
-      mockSend.mockResolvedValue('unconfigured')
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
-      })
-      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
-      expect(screen.queryByText(/Saved/)).not.toBeInTheDocument()
-    })
-
-    it('clears the send-status caption after its display window', async () => {
-      mockSend.mockResolvedValue('sent')
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Thinking of you' }))
-      })
-      expect(screen.getByText('Sent.')).toBeInTheDocument()
-      act(() => {
-        vi.advanceTimersByTime(2_500)
-      })
-      expect(screen.queryByText('Sent.')).not.toBeInTheDocument()
     })
   })
 
