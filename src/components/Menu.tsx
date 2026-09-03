@@ -5,6 +5,7 @@ import { usePwaUpdate, type PwaUpdateStatus } from '../hooks/usePwaUpdate'
 import { useNativeUpdate, type NativeUpdateStatus } from '../hooks/useNativeUpdate'
 import type { NotificationSettings } from '../hooks/useNotificationSettings'
 import type { PushStatus } from '../hooks/usePushSubscription'
+import type { NotificationPermissionState } from '../hooks/useNotificationPermission'
 import { useDialog } from '../hooks/useDialog'
 import './Menu.css'
 
@@ -15,6 +16,14 @@ const MENU_ITEMS: { label: string; view: MenuView }[] = [
   { label: 'CHECK FOR UPDATES', view: 'update' },
   { label: 'SETTINGS', view: 'settings' },
 ]
+
+// Permission comes first: without it nothing fires at all, so a push status
+// underneath would be describing a problem the user cannot reach yet.
+const PERMISSION_TEXT: Partial<Record<NotificationPermissionState, string>> = {
+  unsupported: "This browser can't show notifications at all.",
+  denied: 'Notifications are blocked — turn them back on in your browser or OS settings.',
+  default: 'Waiting for you to allow notifications.',
+}
 
 const PUSH_STATUS_TEXT: Partial<Record<PushStatus, string>> = {
   unsupported: "Push notifications aren't supported on this browser/device.",
@@ -60,6 +69,7 @@ export function Menu({
   notificationSettings,
   onUpdateNotificationSettings,
   pushStatus,
+  notificationPermission,
 }: {
   open: boolean
   history: RelayMessage[]
@@ -67,6 +77,7 @@ export function Menu({
   notificationSettings: NotificationSettings
   onUpdateNotificationSettings: (patch: Partial<NotificationSettings>) => void
   pushStatus: PushStatus
+  notificationPermission: NotificationPermissionState
 }) {
   const [view, setView] = useState<MenuView>('root')
   // Re-focuses on every view switch, since each view replaces the panel's
@@ -201,8 +212,19 @@ export function Menu({
               </div>
             </div>
             <p className="menu-settings-note">
-              "Cat needs attention" only fires while the app is open — the others work even when it's closed.
+              "Cat needs attention" only fires while the app is open, and needs nothing but
+              your permission. The other two are real push and need the relay.
             </p>
+            {notificationSettings.global && PERMISSION_TEXT[notificationPermission] && (
+              <p className="menu-update-status">{PERMISSION_TEXT[notificationPermission]}</p>
+            )}
+            {notificationSettings.global &&
+              notificationPermission === 'granted' &&
+              pushStatus === 'idle' && (
+                <p className="menu-update-status">
+                  Only "cat needs attention" works right now &mdash; messages and updates need the relay.
+                </p>
+              )}
             {PUSH_STATUS_TEXT[pushStatus] && <p className="menu-update-status">{PUSH_STATUS_TEXT[pushStatus]}</p>}
             <button className="menu-close" onClick={() => setView('root')}>[ BACK ]</button>
           </>

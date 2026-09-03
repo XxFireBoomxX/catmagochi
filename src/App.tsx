@@ -13,6 +13,7 @@ import { useMessageHistory } from './hooks/useMessageHistory'
 import { useCareEvents } from './hooks/useCareEvents'
 import { useNotificationSettings } from './hooks/useNotificationSettings'
 import { usePushSubscription } from './hooks/usePushSubscription'
+import { useNotificationPermission } from './hooks/useNotificationPermission'
 import { useAttentionNotifications } from './hooks/useAttentionNotifications'
 import { useQuest } from './hooks/useQuest'
 import { deriveStage, growthProgress, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
@@ -80,6 +81,9 @@ function App() {
   const { messages, dismiss } = useMessages()
   const { history, record } = useMessageHistory()
   const { settings: notificationSettings, update: updateNotificationSettings } = useNotificationSettings()
+  // Owns the OS prompt, independent of the relay -- the local "cat needs
+  // attention" alert needs permission and nothing else.
+  const notificationPermission = useNotificationPermission(notificationSettings.global)
   const { status: pushStatus } = usePushSubscription(notificationSettings)
   useAttentionNotifications(save?.name, save?.stats, save?.sleeping ?? false, notificationSettings)
   const [showStart, setShowStart] = useState(() => !localStorage.getItem(START_SEEN_KEY))
@@ -310,7 +314,7 @@ function App() {
 
       {showNotificationPrompt && !notificationSettings.global && (
         <div className="notification-banner">
-          <span>Turn on notifications so you don't miss a nudge, even when the app's closed.</span>
+          <span>Turn on notifications and {save.name} can tell you when she needs something.</span>
           <div className="notification-banner-actions">
             <button onClick={enableNotifications}>[ ENABLE ]</button>
             <button onClick={dismissNotificationPrompt}>[ NOT NOW ]</button>
@@ -366,6 +370,7 @@ function App() {
         notificationSettings={notificationSettings}
         onUpdateNotificationSettings={updateNotificationSettings}
         pushStatus={pushStatus}
+        notificationPermission={notificationPermission}
       />
 
       <StatsWindow open={statsOpen} save={save} mood={mood} stage={stage ?? 'kitten'} onClose={() => setStatsOpen(false)} />

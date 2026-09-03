@@ -19,11 +19,11 @@ async function loadUsePushSubscription(url: string, token: string, vapidKey: str
 function setupBrowserMocks({
   subscribeImpl,
   getSubscriptionImpl,
-  requestPermissionImpl,
+  permission = 'granted' as NotificationPermission,
 }: {
   subscribeImpl?: ReturnType<typeof vi.fn>
   getSubscriptionImpl?: ReturnType<typeof vi.fn>
-  requestPermissionImpl?: ReturnType<typeof vi.fn>
+  permission?: NotificationPermission
 } = {}) {
   const subscription = {
     endpoint: 'https://push.example.test/abc',
@@ -38,8 +38,10 @@ function setupBrowserMocks({
     writable: true,
   })
   vi.stubGlobal('PushManager', class {})
-  const requestPermission = requestPermissionImpl ?? vi.fn().mockResolvedValue('granted')
-  vi.stubGlobal('Notification', { requestPermission })
+  // The prompt lives in useNotificationPermission now; this hook only reads
+  // the answer.
+  const requestPermission = vi.fn()
+  vi.stubGlobal('Notification', { permission, requestPermission })
   const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, pushEnabled: true }) })
   vi.stubGlobal('fetch', fetchMock)
   return { subscription, getSubscription, subscribe, requestPermission, fetchMock }
@@ -100,7 +102,7 @@ describe('usePushSubscription', () => {
 
   it('reports denied when permission is not granted', async () => {
     const usePushSubscription = await loadUsePushSubscription('wss://relay.test', 'tok', 'BAvapidkey')
-    setupBrowserMocks({ requestPermissionImpl: vi.fn().mockResolvedValue('denied') })
+    setupBrowserMocks({ permission: 'denied' })
     const { result } = renderHook(() => usePushSubscription(enabledSettings))
     await act(async () => {})
     expect(result.current.status).toBe('denied')

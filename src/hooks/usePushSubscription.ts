@@ -61,8 +61,11 @@ export function usePushSubscription(settings: NotificationSettings) {
           return
         }
 
-        const permission = await Notification.requestPermission()
-        if (permission !== 'granted') {
+        // The prompt itself lives in useNotificationPermission -- it is a
+        // browser concern, not a relay one, and keeping it here made the
+        // local "cat needs attention" alert depend on relay configuration it
+        // does not use. By the time we get here the answer is already in.
+        if (Notification.permission !== 'granted') {
           setStatus('denied')
           return
         }
