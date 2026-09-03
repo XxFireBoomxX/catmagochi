@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ActionCueType, Mood, Stage } from '../types'
 import { buildFrame, IDLE_FRAME_COUNT } from '../data/asciiCat'
+import { collarFor, levelBand } from '../data/appearance'
 import './AsciiCat.css'
 
 const EFFECT: Partial<Record<Mood, string>> = {
@@ -35,12 +36,19 @@ export function AsciiCat({
   stage,
   onPet,
   actionCue,
+  trinketId,
+  level = 1,
 }: {
   mood: Mood
   name: string
   stage: Stage
   onPet: () => boolean
   actionCue: { type: ActionCueType } | null
+  // Optional so every existing call site keeps working, and so the cat is
+  // still usable without the quest system -- it is the pet's sprite first and
+  // an RPG avatar second.
+  trinketId?: string | null
+  level?: number
 }) {
   const [frame, setFrame] = useState<0 | 1>(0)
   const [idleFrame, setIdleFrame] = useState(0)
@@ -130,6 +138,8 @@ export function AsciiCat({
     if (onPet()) showCue('<3')
   }
 
+  const collar = collarFor(trinketId)
+
   // The ambient mood glyph re-pops at a new random spot on a jittered loop,
   // same "appear somewhere new, fade, repeat" feel as the floating mood
   // caption in App.tsx -- rather than sitting at one spot and looping the
@@ -182,7 +192,12 @@ export function AsciiCat({
           }
         }}
       >
-        <pre key={mood} className={`cat-sprite stage-${stage}`}>{buildFrame(mood, frame, stage, idleFrame)}</pre>
+        {/* The art itself is never edited: the collar is its own line below
+            it, and the level only restyles the sprite via a data attribute. */}
+        <pre key={mood} className={`cat-sprite stage-${stage}`} data-level-band={levelBand(level)}>
+          {buildFrame(mood, frame, stage, idleFrame)}
+        </pre>
+        {collar && <pre className="cat-collar">{collar}</pre>}
       </div>
     </div>
   )

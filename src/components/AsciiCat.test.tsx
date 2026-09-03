@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AsciiCat } from './AsciiCat'
 import { buildFrame } from '../data/asciiCat'
+import { collarFor, levelBand } from '../data/appearance'
 
 describe('AsciiCat', () => {
   beforeEach(() => {
@@ -259,5 +260,65 @@ describe('AsciiCat', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(document.querySelector('.cat-effect')?.textContent).toBe('<3')
     })
+  })
+})
+
+// --- slice 3: level and equipment show on the cat itself ---
+
+describe('AsciiCat appearance', () => {
+  const render1 = (props: Partial<Parameters<typeof AsciiCat>[0]> = {}) =>
+    render(
+      <AsciiCat mood="happy" name="Mochi" stage="kitten" onPet={() => true} actionCue={null} {...props} />,
+    )
+
+  it('wears no collar when nothing is worn', () => {
+    render1()
+    expect(document.querySelector('.cat-collar')).toBeNull()
+  })
+
+  it('wears no collar when the worn id is null', () => {
+    render1({ trinketId: null })
+    expect(document.querySelector('.cat-collar')).toBeNull()
+  })
+
+  it('shows a collar for a worn trinket', () => {
+    render1({ trinketId: 'rat-tooth' })
+    expect(document.querySelector('.cat-collar')?.textContent).toBe(collarFor('rat-tooth'))
+  })
+
+  it('shows a different collar for a different trinket', () => {
+    const { unmount } = render1({ trinketId: 'rat-tooth' })
+    const first = document.querySelector('.cat-collar')?.textContent
+    unmount()
+    render1({ trinketId: 'bent-whisker' })
+    expect(document.querySelector('.cat-collar')?.textContent).not.toBe(first)
+  })
+
+  it('ignores a consumable in the worn slot', () => {
+    render1({ trinketId: 'fish-scrap' })
+    expect(document.querySelector('.cat-collar')).toBeNull()
+  })
+
+  it('marks the sprite with the level band', () => {
+    render1({ level: 9 })
+    expect(document.querySelector('.cat-sprite')).toHaveAttribute('data-level-band', String(levelBand(9)))
+  })
+
+  // A cat that has never fought must look exactly as it did before this slice.
+  it('renders a level 1 cat identically to one given no level at all', () => {
+    const { unmount } = render1()
+    const bare = document.querySelector('.cat-sprite')!.outerHTML
+    unmount()
+    render1({ level: 1 })
+    expect(document.querySelector('.cat-sprite')!.outerHTML).toBe(bare)
+  })
+
+  // The braille art is embedded verbatim; nothing here may edit it.
+  it('leaves the cat art untouched whatever is worn', () => {
+    const { unmount } = render1()
+    const plain = document.querySelector('.cat-sprite')!.textContent
+    unmount()
+    render1({ trinketId: 'rat-tooth', level: 9 })
+    expect(document.querySelector('.cat-sprite')!.textContent).toBe(plain)
   })
 })

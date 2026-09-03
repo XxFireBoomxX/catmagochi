@@ -104,3 +104,23 @@
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-3px); }
 }
+
+/* The worn trinket, as its own line under the chin. A sibling in the same
+   flex column rather than an overlay: .cat-sprite's font-size is a clamp()
+   that moves with the viewport, so anything absolutely positioned against it
+   drifts on a different screen. */
+.cat-collar {
+  margin: 0;
+  font-size: clamp(7px, 2vw, 10px);
+  line-height: 1;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  text-shadow: 0 0 6px var(--glow);
+}
+
+/* Level bands. Band 1 is deliberately identical to the pre-slice look, so
+   levelling reads as progress rather than as a restyle. */
+.cat-sprite[data-level-band='2'] { color: #d8bcff; text-shadow: 0 0 5px var(--glow); }
+.cat-sprite[data-level-band='3'] { color: #e6d4ff; text-shadow: 0 0 7px var(--glow); }
+.cat-sprite[data-level-band='4'] { color: #f2e8ff; text-shadow: 0 0 10px var(--glow); }
+.cat-sprite[data-level-band='5'] { color: #fdfaff; text-shadow: 0 0 14px var(--glow), 0 0 22px var(--glow); }

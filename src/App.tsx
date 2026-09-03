@@ -100,7 +100,7 @@ function App() {
   // Once she has hunted a little, that shows up in her idle lines. Memoised
   // on the level so the flavour loop isn't restarted by a fresh array on
   // every render.
-  const { level: questLevel } = useQuest()
+  const { level: questLevel, worn: wornTrinket } = useQuest()
   const huntFlavor = useMemo(
     () => (questLevel > 1 ? ['stalks something under the counter', 'practises pouncing on nothing'] : []),
     [questLevel],
@@ -323,7 +323,15 @@ function App() {
       ) : messages.length > 0 ? (
         <MessageView message={messages[0]} onDismiss={() => handleDismissMessage(messages[0])} />
       ) : (
-        <AsciiCat mood={mood} name={save.name} stage={stage ?? 'kitten'} onPet={handlePetClick} actionCue={actionCue} />
+        <AsciiCat
+          mood={mood}
+          name={save.name}
+          stage={stage ?? 'kitten'}
+          onPet={handlePetClick}
+          actionCue={actionCue}
+          trinketId={wornTrinket}
+          level={questLevel}
+        />
       )}
 
       <div className="stats">
