@@ -66,3 +66,37 @@ describe('difficulty curve', () => {
     expect(rate, `level 9 vs house-mouse won ${(rate * 100).toFixed(0)}%`).toBeLessThan(0.95)
   })
 })
+
+// A trinket that changes nothing measurable is a bug the numbers should catch.
+describe('trinkets earn their slot', () => {
+  function winRate(enemyId: string, level: number, trinket?: string): number {
+    const hp = maxHpForLevel(level)
+    const skills = skillsForLevel(level)
+    let wins = 0
+    for (let i = 0; i < RUNS; i++) {
+      let s = startCombat(enemyId, hp, trinket)
+      let turns = 0
+      while (s.outcome === 'ongoing' && turns < 200) {
+        const pounce = skills.find((k) => k.id === 'pounce' && (s.cooldowns[k.id] ?? 0) === 0)
+        s = takeTurn(s, pounce ? pounce.id : 'swipe', Math.random)
+        turns++
+      }
+      if (s.outcome === 'won') wins++
+    }
+    return wins / RUNS
+  }
+
+  // Level 2 keeps the boss fight genuinely in doubt. At level 4 the cat
+  // already wins every time, so nothing can measure better than that.
+  it('makes the boss measurably easier with a rat tooth on', () => {
+    const bare = winRate('pantry-rat', 2)
+    const armed = winRate('pantry-rat', 2, 'rat-tooth')
+    expect(armed, `bare ${(bare * 100).toFixed(0)}% vs rat-tooth ${(armed * 100).toFixed(0)}%`).toBeGreaterThan(bare)
+  })
+
+  it('makes the boss measurably easier with a bent whisker on', () => {
+    const bare = winRate('pantry-rat', 2)
+    const armed = winRate('pantry-rat', 2, 'bent-whisker')
+    expect(armed, `bare ${(bare * 100).toFixed(0)}% vs bent-whisker ${(armed * 100).toFixed(0)}%`).toBeGreaterThan(bare)
+  })
+})

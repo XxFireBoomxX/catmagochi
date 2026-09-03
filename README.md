@@ -33,7 +33,8 @@ in kiosk mode pointed at the same app — no native rewrite).
   kitchen — crumb beetles, mice, grasshoppers, and a pantry rat at the end of
   it. Enemies behave differently rather than just having different numbers: one
   bolts when it is hurt, another telegraphs a turn before it hits hard. Winning
-  earns XP; levels unlock new moves.
+  earns XP; levels unlock new moves. Enemies drop things — fish scraps to eat
+  mid-fight, a rat tooth to wear for a little more bite.
 - **Push notifications** for new messages and new releases, plus a local-only
   "your cat needs attention" alert.
 

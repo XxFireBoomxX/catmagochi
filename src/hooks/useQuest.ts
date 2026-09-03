@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { applyXp, maxHpForLevel, skillsForLevel, xpToNext } from '../data/progression'
 import { ZONES, zoneById, type Zone } from '../data/zones'
+import { ITEM_CAP, itemById } from '../data/items'
 
 const QUEST_KEY = 'catmagochi-quest-v1'
 
@@ -11,6 +12,10 @@ export interface QuestSave {
   zoneClears: Record<string, number>
   // 'YYYY-MM-DD', local. Gates the once-a-day play care event.
   lastPlayDay: string | null
+  // itemId -> count carried, capped at ITEM_CAP.
+  bag: Record<string, number>
+  // The trinket currently worn, if any.
+  worn: string | null
 }
 
 // A new day is the local calendar date, not a 24-hour timer -- a timer drifts
@@ -22,7 +27,7 @@ export function todayKey(now: Date = new Date()): string {
 }
 
 function freshSave(): QuestSave {
-  return { level: 1, xp: 0, zoneClears: {}, lastPlayDay: null }
+  return { level: 1, xp: 0, zoneClears: {}, lastPlayDay: null, bag: {}, worn: null }
 }
 
 // Valid JSON is not a valid save. Same shape-then-clamp approach
@@ -45,7 +50,7 @@ function loadQuest(): QuestSave {
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return freshSave()
 
-  const { level, xp, zoneClears, lastPlayDay } = parsed as Partial<QuestSave>
+  const { level, xp, zoneClears, lastPlayDay, bag, worn } = parsed as Partial<QuestSave>
   const clears: Record<string, number> = {}
   if (zoneClears && typeof zoneClears === 'object' && !Array.isArray(zoneClears)) {
     for (const [id, count] of Object.entries(zoneClears)) {
@@ -56,7 +61,22 @@ function loadQuest(): QuestSave {
     }
   }
 
+  // Unknown ids dropped, counts clamped into 1..ITEM_CAP -- a hand-edited or
+  // older bag can't put an item in the move list that no longer exists.
+  const carried: Record<string, number> = {}
+  if (bag && typeof bag === 'object' && !Array.isArray(bag)) {
+    for (const [id, count] of Object.entries(bag)) {
+      if (!itemById(id)) continue
+      if (typeof count !== 'number' || !Number.isFinite(count) || count < 1) continue
+      carried[id] = Math.min(ITEM_CAP, Math.floor(count))
+    }
+  }
+  const wornItem = typeof worn === 'string' ? itemById(worn) : undefined
+
   return {
+    bag: carried,
+    // Only an actual trinket can be worn; anything else becomes nothing.
+    worn: wornItem?.kind === 'trinket' ? wornItem.id : null,
     level: typeof level === 'number' && Number.isFinite(level) ? Math.max(1, Math.floor(level)) : 1,
     xp: typeof xp === 'number' && Number.isFinite(xp) ? Math.max(0, Math.floor(xp)) : 0,
     zoneClears: clears,
@@ -82,16 +102,27 @@ export function useQuest() {
     }
   }, [save])
 
+  // Every mutation below applies through a functional updater rather than
+  // spreading saveRef.current. Ending a fight calls consume, addLoot and
+  // recordWin back to back in one handler; saveRef only refreshes on render,
+  // so spreading it three times meant all three built on the same stale save
+  // and the last one silently threw away the other two.
   const recordWin = useCallback((zoneId: string, xpGained: number) => {
+    // Safe to read from the ref for the *return* value: nothing else in the
+    // fight-end sequence touches level, xp or lastPlayDay.
     const current = saveRef.current
     const day = todayKey()
     const firstWinToday = current.lastPlayDay !== day
-    const { level, xp, levelsGained } = applyXp(current.level, current.xp, xpGained)
-    setSave({
-      level,
-      xp,
-      zoneClears: { ...current.zoneClears, [zoneId]: (current.zoneClears[zoneId] ?? 0) + 1 },
-      lastPlayDay: day,
+    const { levelsGained } = applyXp(current.level, current.xp, xpGained)
+    setSave((prev) => {
+      const next = applyXp(prev.level, prev.xp, xpGained)
+      return {
+        ...prev,
+        level: next.level,
+        xp: next.xp,
+        zoneClears: { ...prev.zoneClears, [zoneId]: (prev.zoneClears[zoneId] ?? 0) + 1 },
+        lastPlayDay: day,
+      }
     })
     return { levelsGained, firstWinToday }
   }, [])
@@ -100,6 +131,42 @@ export function useQuest() {
   const recordLoss = useCallback(() => {}, [])
 
   const clearsFor = useCallback((zoneId: string) => save.zoneClears[zoneId] ?? 0, [save.zoneClears])
+
+  // A null drop is the common case -- most fights yield nothing -- so it is
+  // accepted here rather than making every caller check first.
+  const addLoot = useCallback((itemId: string | null) => {
+    if (!itemId || !itemById(itemId)) return
+    setSave((prev) => {
+      const held = prev.bag[itemId] ?? 0
+      if (held >= ITEM_CAP) return prev
+      return { ...prev, bag: { ...prev.bag, [itemId]: held + 1 } }
+    })
+  }, [])
+
+  // Called once when a fight ends, with everything CombatState recorded as
+  // used -- not at the moment of use, so quitting mid-fight cannot duplicate.
+  const consume = useCallback((itemIds: string[]) => {
+    if (itemIds.length === 0) return
+    setSave((prev) => {
+      const bag = { ...prev.bag }
+      for (const id of itemIds) {
+        const held = bag[id] ?? 0
+        if (held <= 1) delete bag[id]
+        else bag[id] = held - 1
+      }
+      return { ...prev, bag }
+    })
+  }, [])
+
+  const wear = useCallback((itemId: string | null) => {
+    if (itemId === null) {
+      setSave((prev) => ({ ...prev, worn: null }))
+      return
+    }
+    // Consumables are used, not worn.
+    if (itemById(itemId)?.kind !== 'trinket') return
+    setSave((prev) => ({ ...prev, worn: itemId }))
+  }, [])
 
   const unlockedZones: Zone[] = ZONES.filter((z) => z.unlockLevel <= save.level)
 
@@ -111,6 +178,11 @@ export function useQuest() {
     skills: skillsForLevel(save.level),
     clearsFor,
     unlockedZones,
+    bag: save.bag,
+    worn: save.worn,
+    addLoot,
+    consume,
+    wear,
     recordWin,
     recordLoss,
   }

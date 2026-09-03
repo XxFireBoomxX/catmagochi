@@ -139,3 +139,92 @@ describe('QuestPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
+
+// --- slice 2: loot, the bag, and worn trinkets ---
+
+describe('QuestPanel bag', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-03T09:00:00'))
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const seedBag = (bag: Record<string, number>, worn: string | null = null) =>
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ level: 9, xp: 0, zoneClears: {}, lastPlayDay: null, bag, worn }),
+    )
+
+  it('offers the bag from the hunting grounds', () => {
+    setup()
+    expect(screen.getByRole('button', { name: /bag/i })).toBeInTheDocument()
+  })
+
+  it('says the bag is empty when it is', () => {
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: /bag/i }))
+    expect(screen.getByText(/nothing/i)).toBeInTheDocument()
+  })
+
+  it('lists what is carried, with counts', () => {
+    seedBag({ 'fish-scrap': 3 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: /bag/i }))
+    expect(screen.getByText(/fish scrap/i)).toBeInTheDocument()
+    expect(screen.getByText(/x\s*3/i)).toBeInTheDocument()
+  })
+
+  it('wears a trinket from the bag', () => {
+    seedBag({ 'rat-tooth': 1 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: /bag/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rat tooth/i }))
+    fireEvent.click(screen.getByRole('button', { name: /grounds/i }))
+    expect(screen.getByText(/wearing.*rat tooth/i)).toBeInTheDocument()
+  })
+
+  it('puts a carried consumable in the move list', () => {
+    seedBag({ 'bottle-cap': 2 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: zoneName }))
+    expect(screen.getByRole('button', { name: /bottle cap/i })).toBeInTheDocument()
+  })
+
+  it('keeps a trinket out of the move list -- it is worn, not used', () => {
+    seedBag({ 'rat-tooth': 1 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: zoneName }))
+    expect(screen.queryByRole('button', { name: /rat tooth/i })).not.toBeInTheDocument()
+  })
+
+  it('drops the consumable from the move list once the last one is used', () => {
+    seedBag({ 'bottle-cap': 1 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: zoneName }))
+    fireEvent.click(screen.getByRole('button', { name: /bottle cap/i }))
+    expect(screen.queryByRole('button', { name: /bottle cap/i })).not.toBeInTheDocument()
+  })
+
+  it('spends what the fight used, once the fight is over', () => {
+    seedBag({ 'bottle-cap': 2 })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: zoneName }))
+    fireEvent.click(screen.getByRole('button', { name: /bottle cap/i }))
+    fightToTheEnd()
+    const saved = JSON.parse(localStorage.getItem(KEY)!)
+    expect(saved.bag['bottle-cap']).toBe(1)
+  })
+
+  it('reports what the fight brought back', () => {
+    seedBag({})
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: zoneName }))
+    fightToTheEnd()
+    // A roll of 0 hits the first slot of the beetle's table, which is empty.
+    expect(screen.getByText(/nothing but the/i)).toBeInTheDocument()
+  })
+})
