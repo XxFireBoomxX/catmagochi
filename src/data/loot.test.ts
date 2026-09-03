@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DROPS, rollLoot } from './loot'
 import { ENEMIES } from './enemies'
+import { ZONES } from './zones'
 import { itemById } from './items'
 
 describe('drop tables', () => {
@@ -40,5 +41,32 @@ describe('rollLoot', () => {
 
   it('drops nothing for an enemy it does not know', () => {
     expect(rollLoot('not-an-enemy', 0)).toBeNull()
+  })
+})
+
+// --- slice 4: the deeper grounds ---
+
+describe('drop tables cover the whole ladder', () => {
+  it('gives every zone boss a table that always pays', () => {
+    for (const zone of ZONES) {
+      expect(DROPS[zone.boss], `${zone.boss} has no table`).toBeDefined()
+      expect(DROPS[zone.boss]).not.toContain(null)
+    }
+  })
+
+  it('drops a trinket from every boss', () => {
+    for (const zone of ZONES) {
+      const trinketDrops = DROPS[zone.boss].filter((id) => id && itemById(id)?.kind === 'trinket')
+      expect(trinketDrops.length, `${zone.boss} drops no trinket`).toBeGreaterThan(0)
+    }
+  })
+
+  it('gives every regular enemy a table with a chance of nothing', () => {
+    for (const zone of ZONES) {
+      for (const id of zone.encounters) {
+        expect(DROPS[id], `${id} has no table`).toBeDefined()
+        expect(DROPS[id]).toContain(null)
+      }
+    }
   })
 })

@@ -21,6 +21,30 @@ export const ZONES: Zone[] = [
     encounters: ['crumb-beetle', 'house-mouse', 'grasshopper'],
     boss: 'pantry-rat',
   },
+  {
+    id: 'garden',
+    name: 'the garden',
+    unlockLevel: 4,
+    length: 10,
+    encounters: ['garden-snail', 'field-mouse', 'wasp'],
+    boss: 'magpie',
+  },
+  {
+    id: 'shed',
+    name: 'the shed',
+    unlockLevel: 8,
+    length: 12,
+    encounters: ['cellar-spider', 'shed-rat', 'hornet'],
+    boss: 'old-tomcat',
+  },
+  {
+    id: 'cellar',
+    name: 'the cellar',
+    unlockLevel: 12,
+    length: 14,
+    encounters: ['beetle-swarm', 'blind-mole', 'cave-cricket'],
+    boss: 'boiler-thing',
+  },
 ]
 
 export function zoneById(id: string): Zone | undefined {

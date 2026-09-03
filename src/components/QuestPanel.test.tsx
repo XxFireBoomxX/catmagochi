@@ -228,3 +228,39 @@ describe('QuestPanel bag', () => {
     expect(screen.getByText(/nothing but the/i)).toBeInTheDocument()
   })
 })
+
+// --- slice 4: the ladder is visible ---
+
+describe('QuestPanel zone ladder', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-03T09:00:00'))
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // The level number is only worth caring about if you can see what it buys.
+  it('shows the zones that are still locked, with what opens them', () => {
+    setup()
+    const locked = ZONES.find((z) => z.unlockLevel > 1)!
+    const button = screen.getByRole('button', { name: new RegExp(locked.name, 'i') })
+    expect(button).toHaveTextContent(`lvl ${locked.unlockLevel}`)
+  })
+
+  it('does not let a locked zone be entered', () => {
+    setup()
+    const locked = ZONES.find((z) => z.unlockLevel > 1)!
+    expect(screen.getByRole('button', { name: new RegExp(locked.name, 'i') })).toBeDisabled()
+  })
+
+  it('opens them once the level is high enough', () => {
+    localStorage.setItem(KEY, JSON.stringify({ level: 99, xp: 0, zoneClears: {}, lastPlayDay: null }))
+    setup()
+    for (const zone of ZONES) {
+      expect(screen.getByRole('button', { name: new RegExp(zone.name, 'i') })).not.toBeDisabled()
+    }
+  })
+})

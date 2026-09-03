@@ -12,6 +12,21 @@ export const DROPS: Record<string, (string | null)[]> = {
   'house-mouse': [null, null, 'fish-scrap', 'catnip-leaf', 'bent-whisker'],
   grasshopper: [null, null, 'catnip-leaf', 'beetle-shell'],
   'pantry-rat': ['rat-tooth', 'catnip-leaf', 'fish-scrap'],
+
+  'garden-snail': [null, null, 'garden-herb', 'fish-scrap'],
+  'field-mouse': [null, null, 'garden-herb', 'rusty-nail'],
+  wasp: [null, null, 'rusty-nail', 'garden-herb'],
+  magpie: ['crow-feather', 'garden-herb', 'rusty-nail'],
+
+  'cellar-spider': [null, null, 'rusty-nail', 'ember-scrap'],
+  'shed-rat': [null, null, 'garden-herb', 'ember-scrap'],
+  hornet: [null, null, 'ember-scrap', 'rusty-nail'],
+  'old-tomcat': ['torn-collar', 'ember-scrap', 'garden-herb'],
+
+  'beetle-swarm': [null, null, 'ember-scrap', 'garden-herb'],
+  'blind-mole': [null, null, 'ember-scrap', 'rusty-nail'],
+  'cave-cricket': [null, null, 'ember-scrap', 'garden-herb'],
+  'boiler-thing': ['boiler-bolt', 'ember-scrap', 'garden-herb'],
 }
 
 // `roll` is a number in [0, 1) supplied by the caller rather than read from

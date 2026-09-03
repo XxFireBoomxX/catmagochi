@@ -33,7 +33,7 @@ export function QuestPanel({
   onWin: (firstWinToday: boolean) => void
   onClose: () => void
 }) {
-  const { level, xp, xpNeeded, maxHp, skills, clearsFor, unlockedZones, bag, worn, addLoot, consume, wear, recordWin, recordLoss } =
+  const { level, xp, xpNeeded, maxHp, damageBonus, skills, clearsFor, zones, bag, worn, addLoot, consume, wear, recordWin, recordLoss } =
     useQuest()
   const [view, setView] = useState<View>('grounds')
   const [zone, setZone] = useState<Zone | null>(null)
@@ -49,7 +49,7 @@ export function QuestPanel({
   const startFight = (target: Zone) => {
     const enemyId = encounterFor(target, clearsFor(target.id), Math.random())
     setZone(target)
-    setCombat(startCombat(enemyId, maxHp, worn ?? undefined, heldConsumables))
+    setCombat(startCombat(enemyId, maxHp, worn ?? undefined, heldConsumables, damageBonus))
     setResult(null)
     setView('fight')
   }
@@ -214,12 +214,23 @@ export function QuestPanel({
         <StatBar code="LVL" label={`Level ${level} progress`} value={(xp / xpNeeded) * 100} />
         <div className="quest-subheader">HUNTING GROUNDS</div>
         <div className="quest-options">
-          {unlockedZones.map((z) => (
-            <button key={z.id} className="quest-option" onClick={() => startFight(z)}>
+          {zones.map(({ zone: z, unlocked }) => (
+            <button
+              key={z.id}
+              className="quest-option"
+              onClick={() => unlocked && startFight(z)}
+              disabled={!unlocked}
+            >
               <span className="quest-option-name">{z.name}</span>
               <span className="quest-option-hint">
-                {Math.min(clearsFor(z.id), z.length)}/{z.length}
-                {clearsFor(z.id) >= z.length ? ' cleared' : ''}
+                {unlocked ? (
+                  <>
+                    {Math.min(clearsFor(z.id), z.length)}/{z.length}
+                    {clearsFor(z.id) >= z.length ? ' cleared' : ''}
+                  </>
+                ) : (
+                  `locked -- lvl ${z.unlockLevel}`
+                )}
               </span>
             </button>
           ))}
