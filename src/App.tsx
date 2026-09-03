@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { StartScreen } from './components/StartScreen'
 import { AsciiCat } from './components/AsciiCat'
-import { TrickPanel } from './components/TrickPanel'
+import { QuestPanel } from './components/QuestPanel'
 import { MessageView } from './components/MessageView'
 import { Menu } from './components/Menu'
 import { StatsWindow } from './components/StatsWindow'
@@ -14,7 +14,7 @@ import { useCareEvents } from './hooks/useCareEvents'
 import { useNotificationSettings } from './hooks/useNotificationSettings'
 import { usePushSubscription } from './hooks/usePushSubscription'
 import { useAttentionNotifications } from './hooks/useAttentionNotifications'
-import { useTricks } from './hooks/useTricks'
+import { useQuest } from './hooks/useQuest'
 import { deriveStage, growthProgress, GROW_MESSAGE, STAGE_LABEL } from './data/growth'
 import { ACTION_FLAVOR } from './data/flavorText'
 import type { ActionCueType, CareEventType, PetStats, RelayMessage, Stage } from './types'
@@ -97,17 +97,15 @@ function App() {
   const [captionPop, setCaptionPop] = useState<{ text: string; top: number; left: number; key: number } | null>(null)
   const actionFlavorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const captionKey = useRef(0)
-  // Tricks she already knows become idle flavour, so she performs one now and
-  // then without being asked. Memoised on the ids so the flavour loop isn't
-  // restarted by a fresh array every render.
-  const { learnedTricks } = useTricks()
-  const learnedTrickIds = learnedTricks.map((t) => t.id).join(',')
-  const trickFlavor = useMemo(
-    () => learnedTricks.map((t) => `practices ${t.name}`),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [learnedTrickIds],
+  // Once she has hunted a little, that shows up in her idle lines. Memoised
+  // on the level so the flavour loop isn't restarted by a fresh array on
+  // every render.
+  const { level: questLevel } = useQuest()
+  const huntFlavor = useMemo(
+    () => (questLevel > 1 ? ['stalks something under the counter', 'practises pouncing on nothing'] : []),
+    [questLevel],
   )
-  const flavorText = useFlavorText(mood, trickFlavor)
+  const flavorText = useFlavorText(mood, huntFlavor)
   const prevStage = useRef<Stage | null>(null)
   const stage = save ? deriveStage(save.growth) : null
   const captionText = save ? `${save.name} ${actionFlavor ?? flavorText}` : null
@@ -223,16 +221,13 @@ function App() {
   // One lesson a day. Any outcome still counts as time spent with the cat,
   // so it fires the same 'play' care event the nudge used to -- stats and
   // growth are unchanged, and it still syncs if a relay is ever deployed.
-  const handleLessonDone = () => {
+  // Fighting is unlimited, so it must not become an unlimited stat faucet:
+  // only the first victory of each day counts as the cat having played.
+  const handleQuestWin = (firstWinToday: boolean) => {
+    triggerCue('play')
+    if (!firstWinToday) return
     playGame()
     pulseFor('play')
-    triggerCue('play')
-  }
-
-  // Performing a learned trick is unlimited, so it deliberately changes no
-  // stats -- it's an expressive toy, not a second faucet to optimise.
-  const handlePerformTrick = () => {
-    triggerCue('play')
   }
 
   const handleDismissMessage = (message: RelayMessage) => {
@@ -324,12 +319,7 @@ function App() {
       )}
 
       {playPickerOpen ? (
-        <TrickPanel
-          name={save.name}
-          onLessonDone={handleLessonDone}
-          onPerform={handlePerformTrick}
-          onClose={() => setPlayPickerOpen(false)}
-        />
+        <QuestPanel name={save.name} onWin={handleQuestWin} onClose={() => setPlayPickerOpen(false)} />
       ) : messages.length > 0 ? (
         <MessageView message={messages[0]} onDismiss={() => handleDismissMessage(messages[0])} />
       ) : (

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { START_TOTAL_MS } from './components/StartScreen'
 import type { CareEventType, PetSave, RelayMessage } from './types'
-import { TRICKS } from './data/tricks'
+import { ZONES } from './data/zones'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const NOW = new Date('2026-01-01T00:00:00.000Z').getTime()
@@ -319,63 +319,82 @@ describe('App', () => {
     })
   })
 
-  describe('play / trick lesson', () => {
-    it('opens the trick panel in place of the cat, and disables other actions', () => {
+  describe('play / the hunt', () => {
+    const zoneName = new RegExp(ZONES[0].name, 'i')
+
+    // These tests assert on winning, so the fight must not be left to chance:
+    // a roll of 0 picks the weakest enemy and its lowest damage, which a
+    // level-9 cat clears every time.
+    beforeEach(() => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+    })
+
+    // Level 9 unlocks every skill and gives enough HP to reliably win.
+    const seedHunter = () =>
+      localStorage.setItem(
+        'catmagochi-quest-v1',
+        JSON.stringify({ level: 9, xp: 0, zoneClears: {}, lastPlayDay: null }),
+      )
+
+    // Clicks swipe until the fight resolves. Capped so a bug cannot hang.
+    function fightToTheEnd() {
+      for (let i = 0; i < 60; i++) {
+        const swipe = screen.queryByRole('button', { name: /swipe/i })
+        if (!swipe) return
+        fireEvent.click(swipe)
+      }
+      throw new Error('fight did not end within 60 turns')
+    }
+
+    function winOneFight() {
+      fireEvent.click(screen.getByText('[PLAY]'))
+      fireEvent.click(screen.getByRole('button', { name: zoneName }))
+      fightToTheEnd()
+      fireEvent.click(screen.getByRole('button', { name: /grounds/i }))
+      fireEvent.click(screen.getByRole('button', { name: /back/i }))
+    }
+
+    it('opens the hunting grounds in place of the cat, and disables other actions', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
+      expect(screen.getByText(/hunting grounds/i)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
       expect(screen.getByText('[FEED]')).toBeDisabled()
       expect(screen.getByText('[CLEAN]')).toBeDisabled()
       expect(screen.getByText('[PLAY]')).toBeDisabled()
     })
 
-    it('a lesson applies the play reward exactly once', () => {
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
-      expect(getSave().stats.happiness).toBe(90)
-      expect(getSave().growth).toBe(3)
-      expect(getSave().totalPlays).toBe(1)
-    })
-
-    it('stays open on the result rather than snapping back to the cat', () => {
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
-      expect(screen.queryByRole('button', { name: 'Pet Mochi' })).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument()
-    })
-
-    it('back closes the panel without spending the lesson', () => {
+    it('back closes the panel and restores the cat', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
       fireEvent.click(screen.getByRole('button', { name: /back/i }))
-      expect(getSave().growth).toBe(0)
       expect(screen.getByRole('button', { name: 'Pet Mochi' })).toBeInTheDocument()
-      // and the lesson is still there tomorrow-morning fresh
-      fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByRole('button', { name: /wait quietly/i })).toBeInTheDocument()
+      expect(screen.getByText('[FEED]')).not.toBeDisabled()
     })
 
-    // Performing is unlimited, so it must not double as a stat faucet.
-    it('performing a learned trick changes no stats', () => {
+    // Fighting is unlimited, so the care event has to be rationed instead --
+    // otherwise it is an unlimited stat faucet.
+    it('applies the play reward for the first win of the day only', () => {
       seedSave()
-      localStorage.setItem(
-        'catmagochi-tricks-v1',
-        JSON.stringify({ currentTrickId: TRICKS[1].id, progress: 0, learned: [TRICKS[0].id], lastLessonDay: '2026-01-01' }),
-      )
+      seedHunter()
       renderApp()
-      const before = getSave()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(TRICKS[0].name, 'i') }))
-      expect(getSave().stats).toEqual(before.stats)
-      expect(getSave().growth).toBe(before.growth)
-      expect(mockEmit).not.toHaveBeenCalled()
+      winOneFight()
+      expect(getSave().totalPlays).toBe(1)
+      winOneFight()
+      expect(getSave().totalPlays).toBe(1)
+    })
+
+    it('emits exactly one play care event for the first win of the day', () => {
+      seedSave()
+      seedHunter()
+      renderApp()
+      winOneFight()
+      expect(mockEmit).toHaveBeenCalledTimes(1)
+      expect(mockEmit.mock.calls[0][1]).toBe('play')
+      winOneFight()
+      expect(mockEmit).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -389,11 +408,11 @@ describe('App', () => {
       expect(screen.getByText('[FEED]')).toBeDisabled()
     })
 
-    it('does not let an incoming message interrupt an open trick lesson', () => {
+    it('does not let an incoming message interrupt an open hunt', () => {
       seedSave()
       renderApp()
       fireEvent.click(screen.getByText('[PLAY]'))
-      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
+      expect(screen.getByText(/hunting grounds/i)).toBeInTheDocument()
 
       // Queue a message while the picker is open and force a re-render via
       // usePet's own tick (the mocked useMessages hook only re-reads this on
@@ -403,7 +422,7 @@ describe('App', () => {
         vi.advanceTimersByTime(5_000) // usePet's TICK_MS
       })
 
-      expect(screen.getByText(`TEACHING: ${TRICKS[0].name}`)).toBeInTheDocument()
+      expect(screen.getByText(/hunting grounds/i)).toBeInTheDocument()
       expect(screen.queryByText('hi from home')).not.toBeInTheDocument()
     })
 
@@ -455,15 +474,6 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Pet Mochi' }))
       expect(mockEmit).toHaveBeenCalledTimes(1)
       expect(mockEmit.mock.calls[0][1]).toBe('pet')
-    })
-
-    it('emits exactly one play care event for a lesson', () => {
-      seedSave()
-      renderApp()
-      fireEvent.click(screen.getByText('[PLAY]'))
-      fireEvent.click(screen.getByRole('button', { name: /wait quietly/i }))
-      expect(mockEmit).toHaveBeenCalledTimes(1)
-      expect(mockEmit.mock.calls[0][1]).toBe('play')
     })
 
     it('applies an incoming remote care event to the save and pulses the affected stat', () => {
