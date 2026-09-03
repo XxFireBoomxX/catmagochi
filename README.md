@@ -35,7 +35,8 @@ in kiosk mode pointed at the same app — no native rewrite).
   bolts when it is hurt, another telegraphs a turn before it hits hard. Winning
   earns XP; levels unlock new moves. Enemies drop things — fish scraps to eat
   mid-fight, a rat tooth to wear for a little more bite. What she wears shows
-  on her collar, and she glows brighter as she levels.
+  on her collar, and she glows brighter as she levels. Past the kitchen there
+  is a garden, a shed, and a cellar you probably should not go into.
 - **Push notifications** for new messages and new releases, plus a local-only
   "your cat needs attention" alert.
 

@@ -369,3 +369,54 @@ describe('useQuest mutations compose within one handler', () => {
     expect(result.current.clearsFor(kitchen)).toBe(1)
   })
 })
+
+// --- slice 4: seeing the whole ladder ---
+
+describe('useQuest zone ladder', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('lists every zone, not only the reachable ones', () => {
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.zones).toHaveLength(ZONES.length)
+  })
+
+  it('marks which are open at the current level', () => {
+    const { result } = renderHook(() => useQuest())
+    const open = result.current.zones.filter((z) => z.unlocked)
+    expect(open).toHaveLength(1)
+    expect(open[0].zone.id).toBe(ZONES[0].id)
+  })
+
+  it('opens more as the level rises', () => {
+    seed({ level: 99, xp: 0, zoneClears: {}, lastPlayDay: null })
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.zones.every((z) => z.unlocked)).toBe(true)
+  })
+
+  it('keeps them in ladder order', () => {
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.zones.map((z) => z.zone.id)).toEqual(ZONES.map((z) => z.id))
+  })
+})
+
+// Skill damage is fixed at every level, so without this the cat hits exactly
+// as hard at level 12 as at level 1 -- which made the deeper zones unwinnable.
+describe('useQuest offence scales with level', () => {
+  it('gives a levelled cat a damage bonus', () => {
+    seed({ level: 12, xp: 0, zoneClears: {}, lastPlayDay: null })
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.damageBonus).toBeGreaterThan(0)
+  })
+
+  it('gives a new cat none, so level 1 plays exactly as it always did', () => {
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.damageBonus).toBe(0)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyXp, maxHpForLevel, skillsForLevel, xpToNext } from './progression'
+import { applyXp, damageBonusForLevel, maxHpForLevel, skillsForLevel, xpToNext } from './progression'
 import { SKILLS } from './skills'
 
 describe('xpToNext', () => {
@@ -17,9 +17,33 @@ describe('xpToNext', () => {
 })
 
 describe('maxHpForLevel', () => {
-  it('starts at 10 and adds 2 a level', () => {
+  it('starts at 10 and climbs steeply enough for the deeper zones', () => {
     expect(maxHpForLevel(1)).toBe(10)
-    expect(maxHpForLevel(4)).toBe(16)
+    expect(maxHpForLevel(4)).toBe(28)
+    expect(maxHpForLevel(12)).toBe(76)
+  })
+})
+
+describe('damageBonusForLevel', () => {
+  // Skill damage is fixed, so this is the cat's only offensive growth.
+  it('gives a new cat nothing, so level 1 plays exactly as it always did', () => {
+    expect(damageBonusForLevel(1)).toBe(0)
+  })
+
+  it('climbs with the level', () => {
+    expect(damageBonusForLevel(4)).toBeGreaterThan(damageBonusForLevel(1))
+    expect(damageBonusForLevel(12)).toBeGreaterThan(damageBonusForLevel(8))
+  })
+
+  it('never goes backwards', () => {
+    for (let level = 1; level < 30; level++) {
+      expect(damageBonusForLevel(level + 1)).toBeGreaterThanOrEqual(damageBonusForLevel(level))
+    }
+  })
+
+  it('clamps rather than going negative below level 1', () => {
+    expect(damageBonusForLevel(0)).toBe(0)
+    expect(damageBonusForLevel(-5)).toBe(0)
   })
 })
 

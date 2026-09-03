@@ -48,6 +48,7 @@ export function startCombat(
   catMaxHp: number,
   trinketId?: string,
   held: string[] = [],
+  levelDamage = 0,
 ): CombatState {
   const enemy = enemyById(enemyId)
   // Only an actual trinket applies -- a consumable id passed here is ignored
@@ -62,7 +63,7 @@ export function startCombat(
     catMaxHp: maxHp,
     held: [...held],
     used: [],
-    bonusDamage: worn?.bonusDamage ?? 0,
+    bonusDamage: levelDamage + (worn?.bonusDamage ?? 0),
     firstHitSoftener: worn?.softensFirstHit ?? 0,
     sharpenTurns: 0,
     guarding: false,

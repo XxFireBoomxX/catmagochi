@@ -49,3 +49,38 @@ describe('encounterFor', () => {
     expect(kitchen.encounters).toContain(encounterFor(kitchen, kitchen.length, 0))
   })
 })
+
+// --- slice 4: the full ladder ---
+
+describe('the ladder of zones', () => {
+  it('opens the zones in ascending order of level', () => {
+    for (let i = 1; i < ZONES.length; i++) {
+      expect(ZONES[i].unlockLevel).toBeGreaterThan(ZONES[i - 1].unlockLevel)
+    }
+  })
+
+  it('gives every zone a boss that is not one of its regulars', () => {
+    for (const zone of ZONES) {
+      expect(zone.encounters).not.toContain(zone.boss)
+    }
+  })
+
+  it('gives every zone its own boss', () => {
+    const bosses = ZONES.map((z) => z.boss)
+    expect(new Set(bosses).size).toBe(bosses.length)
+  })
+
+  it('never reuses a regular enemy between zones', () => {
+    const seen = new Set<string>()
+    for (const zone of ZONES) {
+      for (const id of zone.encounters) {
+        expect(seen.has(id), `${id} appears in more than one zone`).toBe(false)
+        seen.add(id)
+      }
+    }
+  })
+
+  it('offers more than one hunting ground to climb through', () => {
+    expect(ZONES.length).toBeGreaterThan(1)
+  })
+})

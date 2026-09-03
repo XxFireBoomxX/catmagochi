@@ -69,12 +69,18 @@ Lets two devices treat one `PetSave` as the same cat instead of each having an i
 
 ### Play (the hunt)
 
-**Slices 1-3 of four are in.** Shipped: combat, skills, one zone, XP/levels
-(1); loot, the bag, consumables and worn trinkets (2); the collar and the level
-palette on the cat itself (3). Not built yet: the garden, shed and cellar (4).
-A reader finding one zone is not looking at a gap, but at a boundary. Specs:
-`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md`,
-`2026-09-03-hunt-loot-design.md`, `2026-09-03-hunt-appearance-design.md`.
+**All four slices are in.** Combat, skills and levels (1); loot, the bag,
+consumables and worn trinkets (2); the collar and level palette on the cat (3);
+the garden, shed and cellar (4). Specs live in
+`docs/superpowers/specs/2026-09-03-hunt-{rpg,loot,appearance,zones}-design.md`.
+
+**The cat's offence scales through `damageBonusForLevel`, not through its
+skills.** Skill damage is fixed -- `swipe` is 2-4 at every level -- so without
+that bonus a level 12 cat hits exactly as hard as a level 1 one. With a single
+zone that was invisible; the moment there were four, every zone past the
+kitchen became unwinnable, and `balance.test.ts` was what found it. `maxHp`
+climbs by 6 a level for the same reason. If you add a zone, check the balance
+suite rather than eyeballing the numbers.
 
 `[PLAY]` has now had four answers. A `YarnGame` reflex mini-game (cut for
 feeling like button-mashing rather than caring for a cat); a nudge sent to the
@@ -174,7 +180,14 @@ runs exactly that sequence.
 engine and asserts the *shape* of the difficulty curve: a new cat clears the
 beetle, the boss is a wall at level 1, level 6 turns that around. Tuning an
 enemy's numbers without meaning to fails there rather than in a fight that is
-quietly no longer fun. It also asserts that a worn trinket measurably improves
+quietly no longer fun. It also holds the ladder in shape: each zone's boss must
+be a wall at the level that opens the zone and beatable a few levels later --
+neither a cliff nor a formality.
+
+**Gotcha, twice now:** measure a `flee` enemy by *survival*, not kills. It
+leaving is the encounter going fine, so counting only wins reports a healthy
+fight as a failure. And measure a trinket where the fight is still in doubt --
+at a saturated level nothing can test better than a ceiling. It also asserts that a worn trinket measurably improves
 the odds — a trinket that changes nothing is a bug the numbers should catch.
 **Gotcha:** measure that at a level where the fight is still in doubt. At
 level 4 the cat already beats the boss every time, so nothing can test better

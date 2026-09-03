@@ -7,7 +7,16 @@ export function xpToNext(level: number): number {
 }
 
 export function maxHpForLevel(level: number): number {
-  return 10 + (level - 1) * 2
+  return 10 + (level - 1) * 6
+}
+
+// The cat's offence has to climb too. Skill damage is fixed -- swipe is 2-4
+// at every level -- so without this a level 12 cat hits exactly as hard as a
+// level 1 one. With a single zone that was invisible; across four it made
+// every later zone unwinnable, which balance.test.ts caught.
+export function damageBonusForLevel(level: number): number {
+  if (!Number.isFinite(level) || level < 1) return 0
+  return Math.floor((level - 1) * 0.75)
 }
 
 export function skillsForLevel(level: number): Skill[] {

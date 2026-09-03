@@ -76,6 +76,52 @@ export const ITEMS: Item[] = [
     hint: '+1 dmg on every attack',
     bonusDamage: 1,
   },
+
+  // --- deeper grounds. Each boss trinket is plainly better than the last, so
+  // clearing a zone changes how the next one plays rather than only adding a
+  // number to a list.
+  {
+    id: 'garden-herb',
+    name: 'garden herb',
+    kind: 'consumable',
+    hint: 'restore 8 hp',
+    heal: 8,
+  },
+  {
+    id: 'rusty-nail',
+    name: 'rusty nail',
+    kind: 'consumable',
+    hint: 'throw it: 6 dmg',
+    damage: [6, 6],
+  },
+  {
+    id: 'ember-scrap',
+    name: 'ember scrap',
+    kind: 'consumable',
+    hint: '+2 dmg for 3 turns',
+    sharpen: true,
+  },
+  {
+    id: 'crow-feather',
+    name: 'crow feather',
+    kind: 'trinket',
+    hint: '+2 dmg on every attack',
+    bonusDamage: 2,
+  },
+  {
+    id: 'torn-collar',
+    name: 'torn collar',
+    kind: 'trinket',
+    hint: 'the first hit lands much softer',
+    softensFirstHit: 2,
+  },
+  {
+    id: 'boiler-bolt',
+    name: 'boiler bolt',
+    kind: 'trinket',
+    hint: '+5 max hp',
+    bonusMaxHp: 5,
+  },
 ]
 
 export function itemById(id: string): Item | undefined {

@@ -11,10 +11,15 @@ import { itemById } from './items'
 // absolutely positioned against it drifts on a different screen. A sibling
 // line in the same flex column is centred by layout and cannot.
 
+// Every trinket needs one, and they must differ -- appearance.test.ts checks
+// both, so gear added later cannot quietly become invisible on the cat.
 const COLLAR_CHARM: Record<string, string> = {
   'bent-whisker': '~',
   'beetle-shell': 'o',
   'rat-tooth': '^',
+  'crow-feather': '/',
+  'torn-collar': '#',
+  'boiler-bolt': '+',
 }
 
 // One row, worn under the chin. Null when nothing is worn, when the id is

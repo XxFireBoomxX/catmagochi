@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ENEMIES, enemyById, FLEE_THRESHOLD } from './enemies'
+import { ZONES } from './zones'
 
 describe('enemies', () => {
   it('has a unique id for every enemy', () => {
@@ -44,5 +45,38 @@ describe('enemies', () => {
   it('finds an enemy by id', () => {
     expect(enemyById(ENEMIES[0].id)).toBe(ENEMIES[0])
     expect(enemyById('nope')).toBeUndefined()
+  })
+})
+
+// --- slice 4: the difficulty ladder ---
+
+describe('enemy strength ascends by zone', () => {
+  // Rough stand-in for "how dangerous is this": health plus the damage it can
+  // put out. A later zone whose enemies were not harder would make the level
+  // requirement a formality.
+  const threat = (id: string) => {
+    const e = enemyById(id)!
+    return e.maxHp + (e.damage[0] + e.damage[1]) * 2
+  }
+
+  it('makes each zone tougher than the one before it', () => {
+    const perZone = ZONES.map((z) => Math.max(...z.encounters.map(threat)))
+    for (let i = 1; i < perZone.length; i++) {
+      expect(perZone[i], `zone ${i} is not harder than zone ${i - 1}`).toBeGreaterThan(perZone[i - 1])
+    }
+  })
+
+  it('pays more for the harder zones', () => {
+    const perZone = ZONES.map((z) => Math.max(...z.encounters.map((id) => enemyById(id)!.xp)))
+    for (let i = 1; i < perZone.length; i++) {
+      expect(perZone[i]).toBeGreaterThan(perZone[i - 1])
+    }
+  })
+
+  it('makes every boss the hardest thing in its own zone', () => {
+    for (const zone of ZONES) {
+      const toughestRegular = Math.max(...zone.encounters.map(threat))
+      expect(threat(zone.boss), `${zone.boss} is not the hardest in ${zone.id}`).toBeGreaterThan(toughestRegular)
+    }
   })
 })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { applyXp, maxHpForLevel, skillsForLevel, xpToNext } from '../data/progression'
+import { applyXp, damageBonusForLevel, maxHpForLevel, skillsForLevel, xpToNext } from '../data/progression'
 import { ZONES, zoneById, type Zone } from '../data/zones'
 import { ITEM_CAP, itemById } from '../data/items'
 
@@ -169,15 +169,20 @@ export function useQuest() {
   }, [])
 
   const unlockedZones: Zone[] = ZONES.filter((z) => z.unlockLevel <= save.level)
+  // The whole ladder, so the panel can show what is still ahead. A level
+  // number is only worth caring about if you can see what it buys.
+  const zones = ZONES.map((zone) => ({ zone, unlocked: zone.unlockLevel <= save.level }))
 
   return {
     level: save.level,
     xp: save.xp,
     xpNeeded: xpToNext(save.level),
     maxHp: maxHpForLevel(save.level),
+    damageBonus: damageBonusForLevel(save.level),
     skills: skillsForLevel(save.level),
     clearsFor,
     unlockedZones,
+    zones,
     bag: save.bag,
     worn: save.worn,
     addLoot,
