@@ -820,3 +820,61 @@ describe('the cat shows its level and gear on the main screen', () => {
     expect(document.querySelector('.cat-sprite')).toHaveAttribute('data-level-band', String(levelBand(9)))
   })
 })
+
+// The reported defect: "cat needs attention" is documented as local-only and
+// needing no server, but the only requestPermission() call lived inside
+// usePushSubscription, which no-ops without relay/VAPID env vars. Permission
+// was therefore never granted and the local alert never fired.
+describe('notifications work without a relay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    mockMessages = []
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('asks for permission when notifications are switched on, with no relay configured', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('granted')
+    vi.stubGlobal('Notification', { permission: 'default', requestPermission })
+    seedSave()
+    localStorage.setItem(
+      'catmagochi-notification-settings-v1',
+      JSON.stringify({ global: true, message: true, attention: true, update: true }),
+    )
+    renderApp()
+    await act(async () => {})
+    expect(requestPermission).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks for nothing while notifications are switched off', async () => {
+    const requestPermission = vi.fn()
+    vi.stubGlobal('Notification', { permission: 'default', requestPermission })
+    seedSave()
+    renderApp()
+    await act(async () => {})
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('says what is actually working when there is no relay', () => {
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() })
+    seedSave()
+    localStorage.setItem(
+      'catmagochi-notification-settings-v1',
+      JSON.stringify({ global: true, message: true, attention: true, update: true }),
+    )
+    renderApp()
+    fireEvent.click(screen.getByText('[MENU]'))
+    fireEvent.click(screen.getByText('SETTINGS'))
+    expect(screen.getByText(/cat needs attention.*works right now/i)).toBeInTheDocument()
+  })
+
+  it('no longer offers to save you from missing a nudge', () => {
+    seedSave()
+    renderApp()
+    expect(screen.queryByText(/nudge/i)).not.toBeInTheDocument()
+  })
+})

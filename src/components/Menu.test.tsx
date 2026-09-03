@@ -5,6 +5,7 @@ import { Menu } from './Menu'
 import type { RelayMessage } from '../types'
 import type { NotificationSettings } from '../hooks/useNotificationSettings'
 import type { PushStatus } from '../hooks/usePushSubscription'
+import type { NotificationPermissionState } from '../hooks/useNotificationPermission'
 
 const mockIsNativePlatform = vi.fn()
 vi.mock('@capacitor/core', () => ({
@@ -36,6 +37,7 @@ function setup({
   onClose = vi.fn(),
   notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
   pushStatus = 'idle' as PushStatus,
+  notificationPermission = 'granted' as NotificationPermissionState,
 } = {}) {
   mockIsNativePlatform.mockReturnValue(isNative)
   const pwaCheck = vi.fn()
@@ -52,6 +54,7 @@ function setup({
       notificationSettings={notificationSettings}
       onUpdateNotificationSettings={onUpdateNotificationSettings}
       pushStatus={pushStatus}
+      notificationPermission={notificationPermission}
     />,
   )
   return { ...utils, onClose, pwaCheck, nativeCheck, nativeApply, onUpdateNotificationSettings }
@@ -83,6 +86,7 @@ describe('Menu', () => {
         notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
         onUpdateNotificationSettings={() => {}}
         pushStatus="idle"
+        notificationPermission="granted"
       />,
     )
     expect(container).toBeEmptyDOMElement()
@@ -251,6 +255,7 @@ describe('Menu', () => {
           notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
           onUpdateNotificationSettings={() => {}}
           pushStatus="idle"
+          notificationPermission="granted"
         />,
       )
       expect(screen.getByText('Downloading update...')).toBeInTheDocument()
@@ -279,6 +284,7 @@ describe('Menu', () => {
           notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
           onUpdateNotificationSettings={() => {}}
           pushStatus="idle"
+          notificationPermission="granted"
         />,
       )
       expect(screen.getByText("Couldn't check for updates. Make sure you're online.")).toBeInTheDocument()
@@ -350,6 +356,7 @@ describe('Menu', () => {
           notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
           onUpdateNotificationSettings={() => {}}
           pushStatus="denied"
+          notificationPermission="granted"
         />,
       )
       expect(screen.getByText(/blocked/)).toBeInTheDocument()
@@ -383,6 +390,7 @@ describe('Menu', () => {
         notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
         onUpdateNotificationSettings={() => {}}
         pushStatus="idle"
+        notificationPermission="granted"
       />,
     )
     fireEvent.click(screen.getByText('MESSAGE HISTORY'))
@@ -395,6 +403,7 @@ describe('Menu', () => {
         notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
         onUpdateNotificationSettings={() => {}}
         pushStatus="idle"
+        notificationPermission="granted"
       />,
     )
     rerender(
@@ -405,6 +414,7 @@ describe('Menu', () => {
         notificationSettings={DEFAULT_NOTIFICATION_SETTINGS}
         onUpdateNotificationSettings={() => {}}
         pushStatus="idle"
+        notificationPermission="granted"
       />,
     )
     expect(screen.getByText('MENU')).toBeInTheDocument()

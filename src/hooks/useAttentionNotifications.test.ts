@@ -18,7 +18,7 @@ function stubNotificationSupport(permission: NotificationPermission | 'unsupport
 
 function stubServiceWorker(showNotification: ReturnType<typeof vi.fn>) {
   Object.defineProperty(navigator, 'serviceWorker', {
-    value: { ready: Promise.resolve({ showNotification }) },
+    value: { getRegistration: () => Promise.resolve({ showNotification }) },
     configurable: true,
     writable: true,
   })
@@ -104,7 +104,7 @@ describe('useAttentionNotifications', () => {
 
   it('notifies for a critically low stat, mentioning the pet name', async () => {
     renderHook(() => useAttentionNotifications('Mochi', { ...healthyStats, fullness: 10 }, false, enabledSettings))
-    await act(async () => {}) // flush the already-resolved serviceWorker.ready microtask
+    await act(async () => {}) // flush the getRegistration microtask
     expect(showNotification).toHaveBeenCalledTimes(1)
     expect(showNotification).toHaveBeenCalledWith(
       'Catmagochi',
@@ -175,5 +175,47 @@ describe('useAttentionNotifications', () => {
     rerender({ stats: { ...healthyStats, fullness: 8 } })
     await act(async () => {})
     expect(showNotification).toHaveBeenCalledTimes(2)
+  })
+})
+
+// In dev there is no service worker at all (vite-plugin-pwa only emits one on
+// build), so navigator.serviceWorker.ready never resolves and the local alert
+// could not fire or be tested locally. The page-level Notification works
+// without one; the SW path stays primary because it survives backgrounding.
+describe('useAttentionNotifications without a service worker', () => {
+  const hungry = { fullness: 5, happiness: 80, energy: 80, cleanliness: 80 }
+  const on = { global: true, message: true, attention: true, update: true }
+
+  it('falls back to a page notification when nothing is registered', async () => {
+    const constructed: string[] = []
+    class FakeNotification {
+      static permission = 'granted'
+      static requestPermission = vi.fn()
+      constructor(title: string) {
+        constructed.push(title)
+      }
+    }
+    vi.stubGlobal('Notification', FakeNotification)
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      serviceWorker: { getRegistration: vi.fn().mockResolvedValue(undefined) },
+    })
+
+    renderHook(() => useAttentionNotifications('Mochi', hungry, false, on))
+    await act(async () => {})
+    expect(constructed).toEqual(['Catmagochi'])
+  })
+
+  it('prefers the service worker when one is registered', async () => {
+    const showNotification = vi.fn()
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() })
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      serviceWorker: { getRegistration: vi.fn().mockResolvedValue({ showNotification }) },
+    })
+
+    renderHook(() => useAttentionNotifications('Mochi', hungry, false, on))
+    await act(async () => {})
+    expect(showNotification).toHaveBeenCalledTimes(1)
   })
 })
