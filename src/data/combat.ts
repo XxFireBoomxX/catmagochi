@@ -1,5 +1,6 @@
 import { FLEE_CHANCE, FLEE_THRESHOLD, enemyById, type Enemy } from './enemies'
 import { skillById } from './skills'
+import { itemById } from './items'
 
 // Every rule of a fight, as pure functions. No React, no storage, no
 // Math.random(): randomness arrives as an injected `rng`, so a whole fight
@@ -24,6 +25,16 @@ export interface CombatState {
   // A windup enemy alternates: true means the next enemy turn is the strike.
   enemyWindingUp: boolean
   cooldowns: Record<string, number>
+  // Consumables carried into this fight, minus the ones already spent. Items
+  // are turns, so they are checked here the same way a cooldown is.
+  held: string[]
+  // What was used, in order. The panel spends these from the bag when the
+  // fight ENDS, not at use: quitting mid-fight must not duplicate an item.
+  used: string[]
+  // Flat bonus from a worn trinket, added to every attack.
+  bonusDamage: number
+  // Reduces the next incoming hit, then clears. From a worn trinket.
+  firstHitSoftener: number
   log: string[]
   outcome: 'ongoing' | 'won' | 'lost' | 'fled'
 }
@@ -32,13 +43,27 @@ function roll(rng: () => number, [min, max]: [number, number]): number {
   return Math.floor(rng() * (max - min + 1)) + min
 }
 
-export function startCombat(enemyId: string, catMaxHp: number): CombatState {
+export function startCombat(
+  enemyId: string,
+  catMaxHp: number,
+  trinketId?: string,
+  held: string[] = [],
+): CombatState {
   const enemy = enemyById(enemyId)
+  // Only an actual trinket applies -- a consumable id passed here is ignored
+  // rather than silently granting a bonus it does not have.
+  const trinket = trinketId ? itemById(trinketId) : undefined
+  const worn = trinket?.kind === 'trinket' ? trinket : undefined
+  const maxHp = catMaxHp + (worn?.bonusMaxHp ?? 0)
   return {
     enemyId,
     enemyHp: enemy?.maxHp ?? 1,
-    catHp: catMaxHp,
-    catMaxHp,
+    catHp: maxHp,
+    catMaxHp: maxHp,
+    held: [...held],
+    used: [],
+    bonusDamage: worn?.bonusDamage ?? 0,
+    firstHitSoftener: worn?.softensFirstHit ?? 0,
     sharpenTurns: 0,
     guarding: false,
     enemyStunTurns: 0,
@@ -60,33 +85,60 @@ function isCornered(enemy: Enemy, enemyHp: number): boolean {
 
 export function takeTurn(state: CombatState, skillId: string, rng: () => number): CombatState {
   if (state.outcome !== 'ongoing') return state
-  const skill = skillById(skillId)
   const enemy = enemyById(state.enemyId)
-  if (!skill || !enemy) return state
-  // Still on cooldown: not a legal move, so the turn is not spent.
-  if ((state.cooldowns[skill.id] ?? 0) > 0) return state
+  if (!enemy) return state
+  const skill = skillById(skillId)
+  const item = itemById(skillId)
+  // An action is either a skill the cat knows or a consumable it is carrying.
+  // Anything else -- including a trinket, which is worn rather than used --
+  // is not a legal move, so the turn is not spent.
+  const usingItem = !skill && item?.kind === 'consumable' && state.held.includes(item.id)
+  if (!skill && !usingItem) return state
+  // Still on cooldown: also not a legal move.
+  if (skill && (state.cooldowns[skill.id] ?? 0) > 0) return state
 
   const log: string[] = []
-  let { enemyHp, catHp, sharpenTurns, guarding, enemyStunTurns, enemyWindingUp } = state
+  let { enemyHp, catHp, sharpenTurns, guarding, enemyStunTurns, enemyWindingUp, firstHitSoftener } = state
   const cooldowns = { ...state.cooldowns }
+  let held = state.held
+  let used = state.used
 
   // --- the cat's turn ---
-  if (skill.damage) {
+  if (usingItem && item) {
+    // Removes one copy, not every copy -- carrying two means using two.
+    const at = held.indexOf(item.id)
+    held = [...held.slice(0, at), ...held.slice(at + 1)]
+    used = [...used, item.id]
+    if (item.heal) {
+      const before = catHp
+      catHp = Math.min(state.catMaxHp, catHp + item.heal)
+      log.push(`${item.name}: ${catHp - before} hp back.`)
+    }
+    if (item.damage) {
+      const dealt = roll(rng, item.damage) + state.bonusDamage
+      enemyHp = Math.max(0, enemyHp - dealt)
+      log.push(`${item.name} hits for ${dealt}.`)
+    }
+    if (item.sharpen) {
+      sharpenTurns = SHARPEN_TURNS + 1
+      log.push(`${item.name}: claws sharpened.`)
+    }
+  } else if (skill?.damage) {
     const bonus = sharpenTurns > 0 ? SHARPEN_BONUS : 0
-    const dealt = roll(rng, skill.damage) + bonus
+    const dealt = roll(rng, skill.damage) + bonus + state.bonusDamage
     enemyHp = Math.max(0, enemyHp - dealt)
     log.push(`${skill.name} hits for ${dealt}.`)
-  } else if (skill.effect === 'sharpen') {
+  } else if (skill?.effect === 'sharpen') {
     sharpenTurns = SHARPEN_TURNS + 1 // +1: the tick at the end of this turn
     log.push('claws sharpened.')
-  } else if (skill.effect === 'guard') {
+  } else if (skill?.effect === 'guard') {
     guarding = true
     log.push('ears flat, braced for the next hit.')
-  } else if (skill.effect === 'stun') {
+  } else if (skill?.effect === 'stun') {
     enemyStunTurns = 1
     log.push(`the ${enemy.name} flinches back.`)
   }
-  if (skill.cooldown > 0) cooldowns[skill.id] = skill.cooldown + 1 // +1: ticked below
+  if (skill && skill.cooldown > 0) cooldowns[skill.id] = skill.cooldown + 1 // +1: ticked below
 
   if (enemyHp === 0) {
     return {
@@ -98,6 +150,9 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
       enemyStunTurns,
       enemyWindingUp,
       cooldowns,
+      held,
+      used,
+      firstHitSoftener,
       log: [...log, `the ${enemy.name} is beaten.`],
       outcome: 'won',
     }
@@ -117,6 +172,9 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
       enemyStunTurns,
       enemyWindingUp,
       cooldowns,
+      held,
+      used,
+      firstHitSoftener,
       log: [...log, `the ${enemy.name} bolts for cover.`],
       outcome: 'fled',
     }
@@ -131,8 +189,10 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
       guarding = false
       log.push(`you take the ${enemy.name}'s hit on flattened ears.`)
     } else {
-      catHp = Math.max(0, catHp - incoming)
-      log.push(`the ${enemy.name} hits back for ${incoming}.`)
+      const softened = Math.max(0, incoming - firstHitSoftener)
+      if (firstHitSoftener > 0) firstHitSoftener = 0
+      catHp = Math.max(0, catHp - softened)
+      log.push(`the ${enemy.name} hits back for ${softened}.`)
     }
   }
 
@@ -146,6 +206,9 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
       enemyStunTurns,
       enemyWindingUp,
       cooldowns,
+      held,
+      used,
+      firstHitSoftener,
       log: [...log, 'you back off, out of fight.'],
       outcome: 'lost',
     }
@@ -167,6 +230,9 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
     enemyStunTurns,
     enemyWindingUp,
     cooldowns,
+    held,
+    used,
+    firstHitSoftener,
     log,
     outcome: 'ongoing',
   }

@@ -221,3 +221,102 @@ describe('takeTurn', () => {
     })
   })
 })
+
+// --- slice 2: items in a fight ---
+
+describe('consumables', () => {
+  const held = ['fish-scrap', 'bottle-cap', 'catnip-leaf']
+
+  it('spends the turn, so the enemy still acts', () => {
+    const s = takeTurn(startCombat('crumb-beetle', 20, undefined, held), 'fish-scrap', rngMax)
+    expect(s.catHp).toBeLessThan(20)
+  })
+
+  it('refuses an item the cat is not carrying, without spending the turn', () => {
+    const s = startCombat('crumb-beetle', 20, undefined, [])
+    expect(takeTurn(s, 'fish-scrap', rngMin)).toBe(s)
+  })
+
+  it('heals, but never above the starting health', () => {
+    const s = startCombat('crumb-beetle', 20, undefined, held)
+    const healedAtFull = takeTurn(s, 'fish-scrap', rngMin)
+    expect(healedAtFull.catHp).toBeLessThanOrEqual(healedAtFull.catMaxHp)
+  })
+
+  it('heals a wounded cat', () => {
+    let s = startCombat('grasshopper', 20, undefined, held)
+    s = takeTurn(s, 'swipe', rngMax) // grasshopper winds up
+    s = takeTurn(s, 'swipe', rngMax) // and lands a big hit
+    const hurt = s.catHp
+    expect(hurt).toBeLessThan(20)
+    const healed = takeTurn(s, 'fish-scrap', rngMin)
+    expect(healed.catHp).toBeGreaterThan(hurt)
+  })
+
+  it('throws a bottle cap for damage', () => {
+    const s = startCombat('pantry-rat', 20, undefined, held)
+    expect(takeTurn(s, 'bottle-cap', rngMin).enemyHp).toBeLessThan(s.enemyHp)
+  })
+
+  it('applies the sharpen buff from catnip', () => {
+    const s = takeTurn(startCombat('pantry-rat', 20, undefined, held), 'catnip-leaf', rngMin)
+    expect(s.sharpenTurns).toBeGreaterThan(0)
+  })
+
+  // Recorded so the panel can spend them from the bag on the way out, rather
+  // than at use -- quitting mid-fight must not duplicate an item.
+  it('records each use exactly once', () => {
+    let s = startCombat('pantry-rat', 30, undefined, held)
+    s = takeTurn(s, 'bottle-cap', rngMin)
+    s = takeTurn(s, 'catnip-leaf', rngMin)
+    expect(s.used).toEqual(['bottle-cap', 'catnip-leaf'])
+  })
+
+  it('lets the same item be used twice when two are carried', () => {
+    let s = startCombat('pantry-rat', 30, undefined, ['bottle-cap', 'bottle-cap'])
+    s = takeTurn(s, 'bottle-cap', rngMin)
+    s = takeTurn(s, 'bottle-cap', rngMin)
+    expect(s.used).toEqual(['bottle-cap', 'bottle-cap'])
+  })
+
+  it('refuses a third use when only two are carried', () => {
+    let s = startCombat('pantry-rat', 30, undefined, ['bottle-cap', 'bottle-cap'])
+    s = takeTurn(s, 'bottle-cap', rngMin)
+    s = takeTurn(s, 'bottle-cap', rngMin)
+    expect(takeTurn(s, 'bottle-cap', rngMin)).toBe(s)
+  })
+})
+
+describe('trinkets', () => {
+  it('adds max health before the fight starts', () => {
+    const plain = startCombat('crumb-beetle', 20)
+    const worn = startCombat('crumb-beetle', 20, 'bent-whisker')
+    expect(worn.catMaxHp).toBe(plain.catMaxHp + 2)
+    expect(worn.catHp).toBe(worn.catMaxHp)
+  })
+
+  it('adds damage to every attack', () => {
+    const plain = startCombat('pantry-rat', 20)
+    const worn = startCombat('pantry-rat', 20, 'rat-tooth')
+    const plainDealt = plain.enemyHp - takeTurn(plain, 'swipe', rngMin).enemyHp
+    const wornDealt = worn.enemyHp - takeTurn(worn, 'swipe', rngMin).enemyHp
+    expect(wornDealt).toBe(plainDealt + 1)
+  })
+
+  // The beetle dies on the second swipe, so it never lands a second hit --
+  // this needs an enemy that survives long enough to hit twice.
+  it('softens only the first incoming hit', () => {
+    const worn = startCombat('house-mouse', 20, 'beetle-shell')
+    const first = takeTurn(worn, 'swipe', rngMax)
+    const firstTaken = worn.catHp - first.catHp
+    const second = takeTurn(first, 'swipe', rngMax)
+    const secondTaken = first.catHp - second.catHp
+    expect(secondTaken).toBe(firstTaken + 1)
+  })
+
+  it('ignores a trinket id that is not a trinket', () => {
+    const plain = startCombat('crumb-beetle', 20)
+    const bogus = startCombat('crumb-beetle', 20, 'fish-scrap')
+    expect(bogus.catMaxHp).toBe(plain.catMaxHp)
+  })
+})
