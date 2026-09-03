@@ -172,14 +172,29 @@ describe('takeTurn', () => {
       expect(wound.catHp - struck.catHp).toBeGreaterThanOrEqual(5)
     })
 
+    // rngMin gives minimum damage and passes the flee roll, so the mouse is
+    // worn down to the threshold and then takes its chance.
     it('lets a badly wounded mouse flee', () => {
       let s = startCombat('house-mouse', 60)
-      while (s.outcome === 'ongoing') s = takeTurn(s, 'swipe', rngMax)
+      while (s.outcome === 'ongoing') s = takeTurn(s, 'swipe', rngMin)
       expect(s.outcome).toBe('fled')
+    })
+
+    // Being cornered is not escaping: the roll happens on the enemy's turn,
+    // so a failed roll leaves it there and gives the player another swing.
+    it('keeps a cornered enemy in the fight when its flee roll fails', () => {
+      // Per turn the engine rolls cat damage, then (once cornered) the flee
+      // chance, then enemy damage. 0 is minimum damage; 0.9 fails the roll.
+      const rng = scripted([0, 0, 0, 0, 0, 0, 0, 0.9, 0])
+      let s = startCombat('house-mouse', 60)
+      for (let i = 0; i < 4; i++) s = takeTurn(s, 'swipe', rng)
+      expect(s.enemyHp).toBe(2) // below the threshold
+      expect(s.outcome).toBe('ongoing')
     })
 
     it('does not let a healthy mouse flee', () => {
       const s = takeTurn(startCombat('house-mouse', 60), 'swipe', rngMin)
+      expect(s.enemyHp).toBe(8)
       expect(s.outcome).toBe('ongoing')
     })
 
@@ -191,7 +206,8 @@ describe('takeTurn', () => {
       expect(s.outcome).toBe('won')
     })
 
-    // The real rule: 10 HP mouse, threshold 0.3, so it bolts at 2 and not 4.
+    // The threshold rule: 10 HP mouse at 0.3, so it is only cornered at 2,
+    // not at 4. rngMin also passes the flee roll, so it goes.
     it('holds at the flee threshold and bolts just below it', () => {
       let s = startCombat('house-mouse', 200)
       s = takeTurn(s, 'swipe', rngMin) // 10 -> 8

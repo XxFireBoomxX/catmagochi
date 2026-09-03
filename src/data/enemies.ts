@@ -26,8 +26,15 @@ export interface Enemy {
   tells: { idle: string; windup: string; flee: string }
 }
 
-// Below this fraction of max HP a fleeing enemy tries to leave.
+// Below this fraction of max HP a fleeing enemy starts trying to leave.
 export const FLEE_THRESHOLD = 0.3
+
+// ...but only with this chance on each of its turns, not the instant it drops
+// below. Certainty made the "edging toward the wall" tell useless: the enemy
+// was already gone before the player could act on it, and a balance run had a
+// level 9 cat actually killing the mouse only 41% of the time. A per-turn roll
+// turns the tell into a warning worth reading.
+export const FLEE_CHANCE = 0.45
 
 export const ENEMIES: Enemy[] = [
   {

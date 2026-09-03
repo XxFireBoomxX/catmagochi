@@ -1,4 +1,4 @@
-import { FLEE_THRESHOLD, enemyById, type Enemy } from './enemies'
+import { FLEE_CHANCE, FLEE_THRESHOLD, enemyById, type Enemy } from './enemies'
 import { skillById } from './skills'
 
 // Every rule of a fight, as pure functions. No React, no storage, no
@@ -49,9 +49,11 @@ export function startCombat(enemyId: string, catMaxHp: number): CombatState {
   }
 }
 
-// Whether a fleeing enemy has been hurt enough to bolt. Only 'flee' enemies
-// ever do -- which is also why the kitchen boss fights to the end.
-function wantsToFlee(enemy: Enemy, enemyHp: number): boolean {
+// Whether a fleeing enemy is hurt enough to be looking for a way out. Only
+// 'flee' enemies ever are -- which is also why the kitchen boss fights to the
+// end. Being cornered is not the same as escaping: the roll happens on the
+// enemy's own turn, so the player always gets one more chance to finish it.
+function isCornered(enemy: Enemy, enemyHp: number): boolean {
   if (enemy.behaviour !== 'flee') return false
   return enemyHp > 0 && enemyHp / enemy.maxHp < FLEE_THRESHOLD
 }
@@ -102,7 +104,10 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
   }
 
   // --- the enemy's turn ---
-  if (wantsToFlee(enemy, enemyHp)) {
+  if (enemyStunTurns > 0) {
+    enemyStunTurns -= 1
+    log.push(`the ${enemy.name} loses its turn.`)
+  } else if (isCornered(enemy, enemyHp) && rng() < FLEE_CHANCE) {
     return {
       ...state,
       enemyHp,
@@ -115,11 +120,6 @@ export function takeTurn(state: CombatState, skillId: string, rng: () => number)
       log: [...log, `the ${enemy.name} bolts for cover.`],
       outcome: 'fled',
     }
-  }
-
-  if (enemyStunTurns > 0) {
-    enemyStunTurns -= 1
-    log.push(`the ${enemy.name} loses its turn.`)
   } else if (enemy.behaviour === 'windup' && !enemyWindingUp) {
     // Telegraphed: this turn is the wind-up, the next one lands.
     enemyWindingUp = true

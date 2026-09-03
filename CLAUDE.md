@@ -110,8 +110,16 @@ a turn). Damage-free skills spend the turn, so all of them carry a cooldown —
 fight with every option on cooldown would deadlock.
 
 **Enemies** (`src/data/enemies.ts`) differ by *behaviour*, not just numbers:
-`plain` attacks every turn, `flee` bolts below `FLEE_THRESHOLD` (0.3) of its
-health, `windup` telegraphs a turn then hits hard. Four enemies with the same
+`plain` attacks every turn, `flee` starts trying to leave below
+`FLEE_THRESHOLD` (0.3) of its health, `windup` telegraphs a turn then hits
+hard. **Fleeing is a roll on the enemy's own turn (`FLEE_CHANCE`), not a
+certainty the instant it drops below.** It was a certainty first, which made
+the "edging toward the wall" tell useless -- the mouse was gone before the
+player could act on it, and `balance.test.ts` caught a level 9 cat actually
+killing it only 41% of the time. As a per-turn roll the tell is a warning
+worth reading, and the rate came up to ~72%: still the one enemy that gets
+away sometimes, which is its entire identity, and a flee pays half xp so the
+fight is never wasted. Four enemies with the same
 rule would be one enemy with four HP totals. Art is three lines of plain ASCII
 of equal width — it sits beside a much larger braille cat in a narrow panel, so
 it has to read at a glance and never change the panel's height. **Gotcha:** the
@@ -138,6 +146,12 @@ state nothing can reach.
 **Gotcha:** a click handler in `QuestPanel` must not be named `use*`.
 `react-hooks/rules-of-hooks` treats any such name as a hook and fails the lint
 when it is called inside a callback; `chooseSkill` was briefly `useSkill`.
+
+`src/data/balance.test.ts` plays thousands of real fights through the real
+engine and asserts the *shape* of the difficulty curve: a new cat clears the
+beetle, the boss is a wall at level 1, level 6 turns that around. Tuning an
+enemy's numbers without meaning to fails there rather than in a fight that is
+quietly no longer fun.
 
 **Gotcha:** any test that asserts on winning a fight must stub `Math.random`.
 `App.test.tsx`'s hunt tests were flaky without it — roughly one run in several
