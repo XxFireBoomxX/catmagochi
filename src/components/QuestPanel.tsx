@@ -43,7 +43,7 @@ export function QuestPanel({
     setView('fight')
   }
 
-  const useSkill = (skillId: string) => {
+  const chooseSkill = (skillId: string) => {
     if (!combat || !zone) return
     const next = takeTurn(combat, skillId, Math.random)
     setCombat(next)
@@ -93,7 +93,7 @@ export function QuestPanel({
                 <button
                   key={skill.id}
                   className="quest-option"
-                  onClick={() => useSkill(skill.id)}
+                  onClick={() => chooseSkill(skill.id)}
                   disabled={cooling > 0}
                 >
                   <span className="quest-option-name">{skill.name}</span>
