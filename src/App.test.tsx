@@ -4,6 +4,7 @@ import App from './App'
 import { START_TOTAL_MS } from './components/StartScreen'
 import type { CareEventType, PetSave, RelayMessage } from './types'
 import { ZONES } from './data/zones'
+import { collarFor, levelBand } from './data/appearance'
 
 const SAVE_KEY = 'catmagochi-save-v1'
 const NOW = new Date('2026-01-01T00:00:00.000Z').getTime()
@@ -777,5 +778,45 @@ describe('App', () => {
       const stored = localStorage.getItem('catmagochi-notification-settings-v1')
       expect(stored ? JSON.parse(stored).global : false).toBe(false)
     })
+  })
+})
+
+describe('the cat shows its level and gear on the main screen', () => {
+  // Its own setup: this block sits outside the main describe, whose beforeEach
+  // is what renderApp()'s timer advance depends on.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    mockMessages = []
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('wears the trinket outside the panel, not only inside it', () => {
+    seedSave()
+    localStorage.setItem(
+      'catmagochi-quest-v1',
+      JSON.stringify({ level: 1, xp: 0, zoneClears: {}, lastPlayDay: null, bag: { 'rat-tooth': 1 }, worn: 'rat-tooth' }),
+    )
+    renderApp()
+    expect(document.querySelector('.cat-collar')?.textContent).toBe(collarFor('rat-tooth'))
+  })
+
+  it('shows no collar when nothing is worn', () => {
+    seedSave()
+    renderApp()
+    expect(document.querySelector('.cat-collar')).toBeNull()
+  })
+
+  it('carries the level band onto the sprite', () => {
+    seedSave()
+    localStorage.setItem(
+      'catmagochi-quest-v1',
+      JSON.stringify({ level: 9, xp: 0, zoneClears: {}, lastPlayDay: null, bag: {}, worn: null }),
+    )
+    renderApp()
+    expect(document.querySelector('.cat-sprite')).toHaveAttribute('data-level-band', String(levelBand(9)))
   })
 })

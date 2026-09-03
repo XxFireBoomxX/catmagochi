@@ -69,13 +69,12 @@ Lets two devices treat one `PetSave` as the same cat instead of each having an i
 
 ### Play (the hunt)
 
-**Slices 1 and 2 of four are in.** Shipped: combat, skills, one zone,
-XP/levels (slice 1); loot, the bag, consumables and worn trinkets (slice 2).
-Not built yet: equipment drawn on the cat and a palette that shifts with level
-(slice 3), the garden/shed/cellar (slice 4). A reader finding no equipment on
-the sprite is not looking at a gap, but at a boundary. See
-`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md` and
-`2026-09-03-hunt-loot-design.md`.
+**Slices 1-3 of four are in.** Shipped: combat, skills, one zone, XP/levels
+(1); loot, the bag, consumables and worn trinkets (2); the collar and the level
+palette on the cat itself (3). Not built yet: the garden, shed and cellar (4).
+A reader finding one zone is not looking at a gap, but at a boundary. Specs:
+`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md`,
+`2026-09-03-hunt-loot-design.md`, `2026-09-03-hunt-appearance-design.md`.
 
 `[PLAY]` has now had four answers. A `YarnGame` reflex mini-game (cut for
 feeling like button-mashing rather than caring for a cat); a nudge sent to the
@@ -180,6 +179,21 @@ the odds — a trinket that changes nothing is a bug the numbers should catch.
 **Gotcha:** measure that at a level where the fight is still in doubt. At
 level 4 the cat already beats the boss every time, so nothing can test better
 than a ceiling.
+
+**The cat shows its level and gear** (`src/data/appearance.ts`), and **`BASE`
+is still not touched** — this is the slice that could have opened that door and
+deliberately does not. `AsciiCat` takes two optional props, `trinketId` and
+`level`, and renders: a **collar as its own `<pre>` line beneath the sprite**
+when a trinket is worn, and `data-level-band` on the sprite, which
+`AsciiCat.css` turns into a colour and glow. Band 1 is byte-identical to the
+pre-slice look, so levelling reads as progress rather than as a restyle, and a
+test asserts a level-1 cat renders exactly like one given no level at all.
+**Gotcha:** the collar is a *sibling line*, not an overlay. `.cat-sprite`'s
+`font-size` is a `clamp()` that moves with the viewport, so anything absolutely
+positioned against it drifts on a different screen; a sibling in the same flex
+column is centred by layout and cannot. Both props are optional so the cat
+stays usable without the quest system — it is the pet's sprite first and an RPG
+avatar second.
 
 **Gotcha:** any test that asserts on winning a fight must stub `Math.random`.
 `App.test.tsx`'s hunt tests were flaky without it — roughly one run in several
