@@ -69,13 +69,13 @@ Lets two devices treat one `PetSave` as the same cat instead of each having an i
 
 ### Play (the hunt)
 
-**This is slice 1 of four.** Combat, progression, inventory, equipment and the
-cat's appearance are five subsystems; building them as one change would leave
-nothing playable until the end. Shipped: combat, skills, one zone, XP/levels.
-Not built yet: loot and inventory (slice 2), equipment drawn on the cat and a
-palette that shifts with level (slice 3), the garden/shed/cellar (slice 4). A
-reader finding no inventory is not looking at a gap, but at a boundary. See
-`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md`.
+**Slices 1 and 2 of four are in.** Shipped: combat, skills, one zone,
+XP/levels (slice 1); loot, the bag, consumables and worn trinkets (slice 2).
+Not built yet: equipment drawn on the cat and a palette that shifts with level
+(slice 3), the garden/shed/cellar (slice 4). A reader finding no equipment on
+the sprite is not looking at a gap, but at a boundary. See
+`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md` and
+`2026-09-03-hunt-loot-design.md`.
 
 `[PLAY]` has now had four answers. A `YarnGame` reflex mini-game (cut for
 feeling like button-mashing rather than caring for a cat); a nudge sent to the
@@ -147,11 +147,39 @@ state nothing can reach.
 `react-hooks/rules-of-hooks` treats any such name as a hook and fails the lint
 when it is called inside a callback; `chooseSkill` was briefly `useSkill`.
 
+**Loot and the bag** (`items.ts`, `loot.ts`): six items in two kinds.
+Consumables are used from the fight's move list and route through the same
+`takeTurn` as skills — an item is a turn, so spending one is a real choice
+against attacking, and one the cat isn't carrying is refused exactly like a
+skill on cooldown. Trinkets are worn, one at a time, and change the numbers a
+fight *starts* with (`startCombat(enemyId, catMaxHp, trinketId, held)`).
+`Item` is one flat shape with optional fields rather than a union per effect:
+six items, no interacting fields, and a union would buy three types and a
+narrowing function to save nothing. A drop table is a flat list where `null`
+means "nothing this time", so the drop rate is visible as how many empty slots
+it has rather than hidden in a separate probability.
+
+**Gotcha:** consumables are spent from the bag when a fight *ends*, not when
+used — `CombatState.used` records them and `QuestPanel` calls `consume()` on
+the way out. Spending at use would lose an item if the app closed mid-fight.
+
+**Gotcha, and a real bug this caused:** every `useQuest` mutation applies
+through a functional `setSave(prev => ...)` updater, never by spreading
+`saveRef.current`. Ending a fight calls `consume`, `addLoot` and `recordWin`
+back to back in one handler; `saveRef` only refreshes on render, so spreading
+it in each meant all three built on the same stale save and the last one
+silently discarded the other two. A regression test in `useQuest.test.ts`
+runs exactly that sequence.
+
 `src/data/balance.test.ts` plays thousands of real fights through the real
 engine and asserts the *shape* of the difficulty curve: a new cat clears the
 beetle, the boss is a wall at level 1, level 6 turns that around. Tuning an
 enemy's numbers without meaning to fails there rather than in a fight that is
-quietly no longer fun.
+quietly no longer fun. It also asserts that a worn trinket measurably improves
+the odds — a trinket that changes nothing is a bug the numbers should catch.
+**Gotcha:** measure that at a level where the fight is still in doubt. At
+level 4 the cat already beats the boss every time, so nothing can test better
+than a ceiling.
 
 **Gotcha:** any test that asserts on winning a fight must stub `Math.random`.
 `App.test.tsx`'s hunt tests were flaky without it — roughly one run in several

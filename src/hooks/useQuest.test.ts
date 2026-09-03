@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { todayKey, useQuest } from './useQuest'
 import { ZONES } from '../data/zones'
+import { ITEM_CAP } from '../data/items'
 
 const KEY = 'catmagochi-quest-v1'
 const NOW = new Date('2026-09-03T09:00:00')
@@ -172,5 +173,199 @@ describe('useQuest', () => {
     })
     const { result } = renderHook(() => useQuest())
     expect(result.current.level).toBe(1)
+  })
+})
+
+// --- slice 2: the bag ---
+
+describe('useQuest bag', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('starts empty with nothing worn', () => {
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.bag).toEqual({})
+    expect(result.current.worn).toBeNull()
+  })
+
+  it('adds loot to the bag', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('fish-scrap')
+    })
+    expect(result.current.bag['fish-scrap']).toBe(1)
+  })
+
+  it('stacks a repeat drop', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('fish-scrap')
+    })
+    act(() => {
+      result.current.addLoot('fish-scrap')
+    })
+    expect(result.current.bag['fish-scrap']).toBe(2)
+  })
+
+  it('ignores an empty drop', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot(null)
+    })
+    expect(result.current.bag).toEqual({})
+  })
+
+  it('ignores a drop it does not recognise', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('not-an-item')
+    })
+    expect(result.current.bag).toEqual({})
+  })
+
+  // Display concern, not difficulty: counts stay one character wide.
+  it('caps a stack rather than growing forever', () => {
+    const { result } = renderHook(() => useQuest())
+    for (let i = 0; i < ITEM_CAP + 5; i++) {
+      act(() => {
+        result.current.addLoot('fish-scrap')
+      })
+    }
+    expect(result.current.bag['fish-scrap']).toBe(ITEM_CAP)
+  })
+
+  it('spends what a fight used', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('bottle-cap')
+    })
+    act(() => {
+      result.current.addLoot('bottle-cap')
+    })
+    act(() => {
+      result.current.consume(['bottle-cap'])
+    })
+    expect(result.current.bag['bottle-cap']).toBe(1)
+  })
+
+  it('removes the entry entirely when the last one is used', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('bottle-cap')
+    })
+    act(() => {
+      result.current.consume(['bottle-cap'])
+    })
+    expect(result.current.bag['bottle-cap']).toBeUndefined()
+  })
+
+  it('never goes negative on an item it does not hold', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.consume(['bottle-cap', 'bottle-cap'])
+    })
+    expect(result.current.bag['bottle-cap']).toBeUndefined()
+  })
+
+  it('wears a trinket, and swaps it for another', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.wear('rat-tooth')
+    })
+    expect(result.current.worn).toBe('rat-tooth')
+    act(() => {
+      result.current.wear('bent-whisker')
+    })
+    expect(result.current.worn).toBe('bent-whisker')
+  })
+
+  it('takes a trinket off', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.wear('rat-tooth')
+    })
+    act(() => {
+      result.current.wear(null)
+    })
+    expect(result.current.worn).toBeNull()
+  })
+
+  it('refuses to wear a consumable', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.wear('fish-scrap')
+    })
+    expect(result.current.worn).toBeNull()
+  })
+
+  it('persists the bag and the worn trinket across a remount', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('rat-tooth')
+    })
+    act(() => {
+      result.current.wear('rat-tooth')
+    })
+    const { result: reloaded } = renderHook(() => useQuest())
+    expect(reloaded.current.bag['rat-tooth']).toBe(1)
+    expect(reloaded.current.worn).toBe('rat-tooth')
+  })
+
+  it('cleans a corrupt bag rather than trusting it', () => {
+    seed({
+      level: 1,
+      xp: 0,
+      zoneClears: {},
+      lastPlayDay: null,
+      bag: { 'fish-scrap': 999, 'not-an-item': 3, 'bottle-cap': -4, 'catnip-leaf': 'lots' },
+      worn: 'fish-scrap',
+    })
+    const { result } = renderHook(() => useQuest())
+    expect(result.current.bag['fish-scrap']).toBe(ITEM_CAP)
+    expect(result.current.bag['not-an-item']).toBeUndefined()
+    expect(result.current.bag['bottle-cap']).toBeUndefined()
+    expect(result.current.bag['catnip-leaf']).toBeUndefined()
+    // a consumable is not something you can be wearing
+    expect(result.current.worn).toBeNull()
+  })
+})
+
+// Ending a fight calls all three in one handler. They must compose: an
+// earlier implementation spread a stale saveRef in each, so the last call
+// silently discarded the other two.
+describe('useQuest mutations compose within one handler', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps the spend, the drop and the win when all three happen together', () => {
+    const { result } = renderHook(() => useQuest())
+    act(() => {
+      result.current.addLoot('bottle-cap')
+    })
+    act(() => {
+      result.current.addLoot('bottle-cap')
+    })
+    act(() => {
+      // exactly the sequence QuestPanel runs when a fight ends
+      result.current.consume(['bottle-cap'])
+      result.current.addLoot('fish-scrap')
+      result.current.recordWin(kitchen, 30)
+    })
+    expect(result.current.bag['bottle-cap']).toBe(1)
+    expect(result.current.bag['fish-scrap']).toBe(1)
+    expect(result.current.xp).toBe(30)
+    expect(result.current.clearsFor(kitchen)).toBe(1)
   })
 })
