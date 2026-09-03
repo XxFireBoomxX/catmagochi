@@ -29,10 +29,11 @@ in kiosk mode pointed at the same app — no native rewrite).
 - **One cat, two devices.** Care actions sync between devices as an event log
   rather than raw stat numbers, so two people looking after the same cat merge
   instead of overwriting each other.
-- **You teach her tricks.** One lesson a day. She has a mood, you pick how to
-  approach it, and the two together shift the odds — she is a cat, so she often
-  ignores you entirely, which is most of the fun. After a week or so of lessons
-  a trick sticks for good, and you can ask her to show it off any time.
+- **She hunts.** `[PLAY]` opens a turn-based fight against whatever is in the
+  kitchen — crumb beetles, mice, grasshoppers, and a pantry rat at the end of
+  it. Enemies behave differently rather than just having different numbers: one
+  bolts when it is hurt, another telegraphs a turn before it hits hard. Winning
+  earns XP; levels unlock new moves.
 - **Push notifications** for new messages and new releases, plus a local-only
   "your cat needs attention" alert.
 

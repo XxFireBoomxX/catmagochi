@@ -25,17 +25,17 @@ The game itself is client-only React + TypeScript. Pet state lives in `localStor
   - Loads/saves a single `PetSave` under the `catmagochi-save-v1` localStorage key. `loadSave()` merges defaults (`{ growth: 0, adoptedAt: Date.now(), totalFeeds: 0, totalPlays: 0, totalCleans: 0, totalPets: 0, ...parsed }`) so saves from before any of these fields existed don't break — same pattern each time a new field is added to `PetSave`. It first checks the *shape* via `isPetSaveShaped`, not just that the JSON parses: valid-but-wrong JSON (`null`, `{}`, a bare string, non-numeric stats) used to flow into `applyElapsed` and throw on `stats.fullness`, blanking the screen with no in-app way to recover. Anything unusable starts the pet over; a save missing only `lastUpdate` is recovered rather than discarded, since the pet itself is intact. `adoptedAt` on an upgraded old save is necessarily a best-effort "first loaded after the upgrade" date, not the pet's real original adoption date, since that was never recorded before.
   - Stat decay/regen is time-based, not tick-based: every 5s (`TICK_MS`) it recomputes stats from elapsed real milliseconds since `lastUpdate` using per-minute rates (`AWAKE_DECAY` vs `SLEEP_RATE`). This is also applied once on load, so stats "catch up" for time the app was closed (capped at 12 simulated hours so long absences don't require special-casing).
   - `deriveMood(stats, sleeping)` maps stats to a `Mood` by priority (sleeping > hungry > tired > dirty > sad > happy/content) — this is the single source of truth for both the on-screen mood text and which ASCII frame set renders.
-  - `growth` (on `PetSave`, not `PetStats`) is earned only through positive actions, never passively over time: `feed` +3, `clean` +2, `pet` +1, `playGame` +3 (see "Play (a daily trick lesson)" below for what `play` means now). `src/data/growth.ts`'s `deriveStage(growth)` turns that into a `Stage`.
+  - `growth` (on `PetSave`, not `PetStats`) is earned only through positive actions, never passively over time: `feed` +3, `clean` +2, `pet` +1, `playGame` +3 (see "Play (the hunt)" below — `playGame` now fires on the first hunting victory of each day). `src/data/growth.ts`'s `deriveStage(growth)` turns that into a `Stage`.
   - Actions (`feed`, `playGame`, `clean`, `toggleSleep`) are disabled while asleep except waking up. `pet()` is cooldown-gated (`PET_COOLDOWN_MS`, tracked via a ref, not persisted) and returns a boolean indicating whether it actually applied, so the UI only shows a reaction when the happiness bump really happened.
 - `src/data/growth.ts` — `GROWTH_THRESHOLDS`, `deriveStage`, `STAGE_LABEL` (badge text), `GROW_MESSAGE` (banner text shown only on `young`/`adult` transitions, not the initial `kitten` state).
 - `src/data/asciiCat.ts` — the cat is a single **verbatim braille-art image** (`BASE`, a 23-row array the file's own comment marks "embedded VERBATIM — do not regenerate or 'improve' it"), not generated art. Animation is character-level surgery on the eye rows only (rows 8-10): `openEyes(idleFrame)` slides the pupils (`⢼⣿`/`⣾⣷`, offset by `LEFT_OFFSETS`/`RIGHT_OFFSETS`) within the eye holes for an idle glancing loop, and `closedEyes()` swaps the holes for a closed-lid fill (`⣿` over a `⠉` lash line) for blinking or sleeping. Every character outside that three-row band is always exactly the reference art, unchanged. **There is no per-stage art and no per-mood face**: `buildFrame(mood, blinkFrame, _stage, idleFrame)` takes `stage` only to satisfy its callers' signature (the parameter is unused, prefixed `_stage`) — growth stages render the *same* `BASE` art, just scaled up via CSS `font-size` per `.cat-sprite.stage-kitten/young/adult` class in `AsciiCat.css`. `mood` is only ever consulted for one check, `mood === 'sleeping'`, to pick the closed-eye frame — hungry, tired, dirty, and sad all render with the exact same open-eyed face as happy/content; the mood signal for those states comes entirely from the floating caption/glyph, never from the cat's own expression. **Gotcha:** when testing visually, remember stats of 80 make `deriveMood` return `happy`, not `content` — comparing a browser render against a terminal print of a different mood looks like a rendering bug (still applies, even though mood no longer changes the face — it still changes the caption/glyph you'd be comparing against).
 - `src/components/AsciiCat.tsx` + `AsciiCat.css` — the cat renders in a `<pre class="cat-sprite">` whose CSS (small `font-size` clamp + `line-height: 0.8`) makes the `':'` fill merge into a solid shape instead of reading as text. Two independent timers layer: the chained-`setTimeout` blink loop (resets on mood change; blink = eyes become cleared slits) and a `setInterval` pupil-wander (`IDLE_INTERVAL_MS` / `IDLE_FRAME_COUNT`) — plus a continuous CSS `gentle-bob` keyframe for idle sway. A floating **plain-ASCII** effect (`EFFECT` map — `*`, `?`, `;;`, `~`, `-.-`; no emoji anywhere in the app) plays above it, rendered from a single `glyphPop` state (`{ text, top, left, key }`) so cue reactions and the idle mood glyph share one rendering path: `popGlyph(text)` picks a fresh random `top`/`left` and bumps `key`, and `key` is what forces `.cat-effect`'s CSS `float-up` animation (a one-shot `forwards` fade, not a loop) to restart from the DOM on every pop rather than just re-triggering in place. Two things call `popGlyph`: `showCue(glyph)` (used by a successful `onPet()` for `<3`, and by the external `actionCue` prop — `{ type: ActionCueType } | null`, set by `App.tsx` — for the `ACTION_EFFECT` map's `feed`/`clean`/`sleep`/`wake` glyphs, plus the same reaction bounce), and a self-scheduling ambient loop (`AMBIENT_POP_MIN_MS`/`_JITTER_MS`, chained `setTimeout` like the blink loop) that keeps re-popping the idle `EFFECT[mood]` glyph at new random spots for as long as no cue is active — this existed first as a one-time-per-mood-change position, then was generalized to fully match the caption's "appear, fade, repeat" feel once asked for it too. **Gotcha:** the ambient loop is gated by `cueActiveRef` (a ref), not `cueGlyph` (state) — React runs every `useEffect` once on mount regardless of dependencies, so if `actionCue` were already non-null on the very first render, both the cue-triggering effect and the ambient effect would fire within that same commit; the ambient one would read `cueGlyph` from its own stale pre-update closure and clobber the cue's pop. A ref sidesteps this since `cueActiveRef.current = true` (set synchronously inside `showCue`, before the ambient effect runs) is visible immediately, with no closure staleness. This exact bug was unreachable through real usage (`App.tsx`'s `actionCue` state always starts `null`) but was still worth fixing rather than leaving latent. `showCue`'s revert timer explicitly falls back to `setGlyphPop(null)` when the mood has no `EFFECT` entry, rather than leaving a stale cue glyph on screen forever. Both `.cat-effect` and `.floating-caption` (`App.tsx`) use a stacked-`text-shadow` outline (four 1px offsets in `var(--bg)`) plus the existing glow, so the text stays legible now that it can land over any part of the card. **Gotcha:** the bounce is `reacting reacting-0`/`reacting-1`, alternating on `glyphPop.key`, not a single `.reacting` class. `App.tsx` already passes a fresh `{ type }` object so the cue effect re-fires on a repeated identical action — but one layer down `setCueGlyph('nom nom')` twice is `Object.is`-equal, so with one fixed class the rendered `className` was byte-identical, React mutated nothing, and the CSS animation never restarted: the cat sat still on every repeat press. The two classes carry identical keyframes under different `animation-name`s purely to force that restart. Add new moods by extending the `Mood` union in `types.ts`, adding a case to `deriveMood`, and adding an eye/mouth stamp branch in `stampFace`.
-- `src/components/TrickPanel.tsx` + `.css` — replaces `AsciiCat` in place (same panel chrome, imports `AsciiCat.css` for the shared `.ascii-screen` class) while `[PLAY]` is active. Three views off one local `view` state: `lesson` (mood + three approaches), `result` (the outcome line, plus either a `StatBar` reused as a learning-progress bar or the celebration), and `showoff` (learned tricks as buttons). Opens on `lesson` when one is available, otherwise straight to `showoff`. See "Play (a daily trick lesson)" below.
-- `src/data/tricks.ts` / `src/data/lessons.ts` / `src/hooks/useTricks.ts` — the curriculum, the lesson odds and prose, and the persisted progress. Also below.
+- `src/components/QuestPanel.tsx` + `.css` — replaces `AsciiCat` in place (same panel chrome, imports `AsciiCat.css` for the shared `.ascii-screen` class) while `[PLAY]` is active. Three views off one local `view` state: `grounds`, `fight`, `result`. See "Play (the hunt)" below.
+- `src/data/combat.ts` / `skills.ts` / `enemies.ts` / `zones.ts` / `progression.ts` / `src/hooks/useQuest.ts` — the fight rules (pure), the move list, the roster, the hunting grounds, the XP curve, and the persisted run. Also below.
 - `src/data/flavorText.ts` + `src/hooks/useFlavorText.ts` — `MOOD_LABEL` is the steady-state caption per mood; `useFlavorText` periodically (chained `setTimeout`, ~6-10s jittered) swaps in a random line from `FLAVOR_TEXT[mood]` (falling back to `GENERIC_FLAVOR`) for a few seconds before reverting. Resets whenever `mood` changes.
 - `src/components/StatBar.tsx` — renders an ASCII block-character bar (`████░░░░`, 10 segments) plus a 4-letter `code` label, colored by low/mid/high threshold; accepts an `isPulsing` prop (a `Set<keyof PetStats>` in `App.tsx`, since one action can pulse several stats) for the brief glow shown right after an action changes that stat. Which bars pulse comes from **one** table, `App.tsx`'s `CARE_EVENT_STATS`, via `pulseFor(type)` — used by local actions and replayed remote events alike. It used to be hand-written per button, which had silently drifted from `applyCareEvent`: FEED raises happiness but only pulsed fullness, and petting pulsed nothing at all. If you change a delta in `applyCareEvent`, change `CARE_EVENT_STATS` with it.
 - `src/components/StartScreen.tsx` — a brief boot splash shown before anything else, but only on the very first open (`App.tsx`'s `showStart` state lazily inits to `!localStorage.getItem('catmagochi-start-seen-v1')`, and its `onDone` callback sets that flag before dismissing the splash, so every later open skips straight to `NameScreen`/the game). Exists because the OS/browser's own auto-generated PWA splash (built from the manifest — icon centered on `background_color`) can't be turned into a real designed screen; it's icon+color and nothing else, controlled before any of our JS runs. This component is the practical stand-in for that one first impression: it renders the instant React takes over, so for an app this size it reads as the actual loading screen. Pure `setTimeout` choreography, no real loading happening — `START_DISPLAY_MS` (900ms) then adds a `fading` class (CSS opacity transition), and `START_TOTAL_MS` (1200ms total) later calls `onDone`. `StartScreen` itself stays stateless and flag-unaware — the skip-after-first-open persistence lives entirely in `App.tsx`, which already owns `showStart`. Uses the same "ref updated during the render body" pattern as `usePet.ts`'s `saveRef` (`onDoneRef`) so the timer effect can have an empty dependency array and not restart if `onDone`'s identity changes between renders.
-- `src/App.tsx` — top-level flow: `showStart` gates on `StartScreen` first (see above), then shows `NameScreen` until a save exists (first run), otherwise renders the game screen driven by `usePet` and `useFlavorText`. `playPickerOpen` state swaps `AsciiCat` for `TrickPanel` in place when `[PLAY]` is pressed (all other action buttons disabled meanwhile). A `prevStage` ref + `useEffect` detects stage transitions and shows a transient `.grow-banner`.
+- `src/App.tsx` — top-level flow: `showStart` gates on `StartScreen` first (see above), then shows `NameScreen` until a save exists (first run), otherwise renders the game screen driven by `usePet` and `useFlavorText`. `playPickerOpen` state swaps `AsciiCat` for `QuestPanel` in place when `[PLAY]` is pressed (all other action buttons disabled meanwhile). A `prevStage` ref + `useEffect` detects stage transitions and shows a transient `.grow-banner`.
   - Every action button (`FEED`/`CLEAN`/`SLEEP`/`WAKE`) and a successful pet also call `triggerCue(type)` (sets `AsciiCat`'s `actionCue` prop, always as a fresh `{ type }` object rather than a bare `ActionCueType` string — pressing the same action twice in a row needs the prop *reference* to change so `AsciiCat`'s `useEffect(() => {...}, [actionCue])` re-fires; a repeated identical string would fail React's `Object.is` check and silently skip re-triggering the cue) and `maybeShowActionFlavor(type)`. The latter is a flat `ACTION_FLAVOR_CHANCE` (25%) roll that, on a hit, temporarily overrides `flavorText` (from `useFlavorText`) with a bonus line from `ACTION_FLAVOR[type]` (`src/data/flavorText.ts`) — plain local `useState`/`setTimeout`, doesn't touch `useFlavorText`'s own internals. Two independent "extra delight" layers (glyph+bounce on the cat, bonus caption text) fire from the same action, but are otherwise unrelated mechanisms.
   - There's no persistent, always-visible mood caption anymore — deliberately so, per the "one static place is boring" feedback that motivated this. `captionText` (name + whichever of `actionFlavor`/`flavorText` is current) is watched by a `useEffect`; every time its *value* changes, a `captionPop` object is recreated with a fresh random `top`/`left` (bounded to roughly the upper half of the card, away from the stat bars/buttons) and an incrementing `key`. The `key` is what forces React to unmount/remount the `.floating-caption` div so its CSS `caption-float` animation (fade in, hold, drift up + fade out over 2.6s, `animation-fill-mode: forwards`) restarts from the DOM rather than just visually re-triggering on the same node. Between value changes the last pop just sits there faded to `opacity: 0` (harmless, cheaper than adding cleanup logic to unmount it) until the next change replaces it outright.
   - The `.stage-label` badge (`[KITTEN]` etc) is tappable (`role="button"`, `aria-expanded`) and toggles `showGrowthProgress`, which reveals a `StatBar` reused as a growth-progress bar (`code="GROW"`) sized via `src/data/growth.ts`'s `growthProgress(growth)` — progress is *within the current stage's band*, not raw `growth`/threshold, so a young cat just past the young threshold reads as ~0% toward adult rather than >100% against a threshold it already cleared. `adult` has no `nextStage`, so the bar is replaced with a static "fully grown!" line instead of a maxed-out bar (there's nothing further to progress toward).
@@ -47,12 +47,12 @@ Dark purple retro-terminal look (deliberate single theme, not responsive to syst
 
 ### Messaging ("send from home")
 
-Lets the user push short messages to the app from anywhere, via a self-hosted relay (not a managed third-party service — see `server/README.md` for why and how to deploy). Same panel-swap pattern as `TrickPanel`.
+Lets the user push short messages to the app from anywhere, via a self-hosted relay (not a managed third-party service — see `server/README.md` for why and how to deploy). Same panel-swap pattern as `QuestPanel`.
 
 - `server/server.js` — standalone Node process (own `package.json`, not part of the Vite build/frontend). Plain `http` + `ws`, no framework. `GET /ws?token=` upgrades to a WebSocket after checking `RELAY_TOKEN`; `POST /send` (also token-checked) queues a message and broadcasts it to connected sockets. Undelivered messages persist to `server/messages.json` (or `$DATA_DIR/messages.json` in production, meant to be a mounted volume) and replay to a client as soon as it connects, so messages sent while the device is offline still arrive. Clients ack (`{type:'ack', id}`) once a message is actually displayed, not just received. `/send` also accepts an optional `kind` field (checked against `MESSAGE_KINDS`, currently just `'nudge'`); an unrecognized `kind` is silently dropped rather than rejecting the send, since it's a decorative/rendering hint, not something worth failing a request over.
 - `src/hooks/useMessages.ts` — no-ops entirely (never opens a socket) if `VITE_RELAY_URL`/`VITE_RELAY_TOKEN` aren't set at build time, so the app works standalone before/without the relay. Otherwise connects and auto-reconnects with a chained-`setTimeout` backoff (1s → 30s cap), same style as the blink loop in `AsciiCat.tsx` and `useFlavorText.ts`. Holds a local FIFO `messages` queue. Also exposes `send(text, kind?)`, a fire-and-forget `POST /send` (matching `sender.html`'s own send behavior) — unlike care events, a nudge isn't part of a replayed stat log, so there's no outbox to retry from; a send attempted while offline just fails silently.
-- `src/components/MessageView.tsx` — reuses `.ascii-screen` from `AsciiCat.css` (same "one little screen, different content" pattern as `TrickPanel`). Tapping calls `dismiss(id)` (acks + removes from the local queue); `App.tsx` also calls `usePet`'s `receiveMessage()` (+5 happiness, no growth — receiving a note isn't "care" the way feeding/playing/cleaning is) on dismiss, *unless* the message is `kind: 'nudge'`, since a nudge already rewarded the shared cat via its `play` care event at send time. Nudges can no longer be *sent* from this app (see "Play" below), but the branch stays: a relay may still hold nudge-kind messages sent by an older build.
-- In `App.tsx`, render priority in the shared panel slot is `TrickPanel` > `MessageView` > `AsciiCat` — an incoming message never interrupts an open lesson, it just waits. `actionsDisabled` includes `messages.length > 0`.
+- `src/components/MessageView.tsx` — reuses `.ascii-screen` from `AsciiCat.css` (same "one little screen, different content" pattern as `QuestPanel`). Tapping calls `dismiss(id)` (acks + removes from the local queue); `App.tsx` also calls `usePet`'s `receiveMessage()` (+5 happiness, no growth — receiving a note isn't "care" the way feeding/playing/cleaning is) on dismiss, *unless* the message is `kind: 'nudge'`, since a nudge already rewarded the shared cat via its `play` care event at send time. Nudges can no longer be *sent* from this app (see "Play" below), but the branch stays: a relay may still hold nudge-kind messages sent by an older build.
+- In `App.tsx`, render priority in the shared panel slot is `QuestPanel` > `MessageView` > `AsciiCat` — an incoming message never interrupts an open hunt, it just waits. `actionsDisabled` includes `messages.length > 0`.
 - `sender.html` (repo root) — a standalone plain HTML/JS page (no build step, not part of the React app or PWA) for actually sending *freely-typed* messages: a textarea posting to `<relay>/send`. It holds **no credentials** — the file is tracked by git, so a token written into it would be published by the next commit and stay in history through any later rotation. It prompts for the relay URL and token on first send and keeps them in that browser's `localStorage`, with a `[ change relay ]` control to re-enter them after a rotation. Deliberately kept out of the main app bundle so there's no path for the message recipient to stumble into a general-purpose "send" UI. The main app now has no send affordance of any kind: the nudge picker that briefly provided a narrow one is gone (see "Play" below).
 - `src/data/deviceId.ts` — `getDeviceId()`, a stable per-install id persisted under `catmagochi-device-id-v1`. Both relay hooks send it as `origin` on what they POST and as `?device=` on the socket they listen on, so the relay can skip handing an item back to the device that sent it. **This is load-bearing, not cosmetic**: the relay's pending queue is shared and drained by the *first* ack from any client, so a sender that receives and acks its own echo deletes the item before the other device connects. Without it you are shown the nudge you just sent, and dismissing it destroys the note for an offline partner. Falls back to a per-session id if `localStorage` throws (private mode), which degrades to the old echo behaviour rather than breaking.
 - The `RELAY_TOKEN`/`VITE_RELAY_TOKEN` shared secret is not real auth — it ends up in the client bundle, so treat it as "keeps random strangers out," not a security boundary. See `server/README.md` for rotating it.
@@ -67,69 +67,81 @@ Lets two devices treat one `PetSave` as the same cat instead of each having an i
 - `src/hooks/useCareEvents.ts` mirrors `useMessages.ts`'s reconnect/backoff WebSocket shape (its own separate connection, not shared with messaging — merging them would still need per-frame-type filtering on both sides anyway), but differs in two ways. Incoming events are silent and applied immediately via the `onEvent` callback then acked, rather than queued for a person to dismiss like messages are. Outgoing events go through a small `localStorage`-backed outbox (`catmagochi-care-outbox-v1`) instead of a bare fire-and-forget POST — the whole point of an event log is that offline actions aren't lost, so `emit(id, type)` queues to the outbox first and only removes an entry once its POST actually succeeds; a failed/impossible send (offline) just leaves it queued. Flushing is opportunistic: attempted immediately in `emit()`, and again whenever the WebSocket reconnects, reusing that connection's own backoff pacing instead of adding a second retry timer.
 - `App.tsx` wires the two hooks together, which has a chicken-and-egg problem: `usePet`'s `onCareEvent` needs `useCareEvents().emit`, and `useCareEvents`'s `onEvent` needs `usePet`'s `applyRemoteEvent` — each hook's callback is only known once the *other* hook has already been called. Solved with a `handleRemoteCareEventRef` ref, assigned fresh every render right after `pulse`/`triggerCue`/`maybeShowActionFlavor` are defined (mirroring the same "ref updated during the render body, not inside an effect" pattern `usePet.ts` uses for `saveRef`), plus a closure for the other direction (`usePet(() => careEvents.emit(...))` referencing `careEvents` before its own `const` line — safe because the closure isn't *invoked* until a later action, well after `careEvents` is assigned). A successfully-applied remote event gets the same reactions a local action does: `CARE_EVENT_STATS` maps each `CareEventType` to the stat bars it pulses (mirroring `applyCareEvent`'s deltas), and `feed`/`clean`/`play` also get the matching `AsciiCat` glyph cue via `triggerCue`. `pet` skips the glyph cue (no compelling reaction was designed for it) but still pulses happiness, and gets a bonus caption chance via `maybeShowActionFlavor` — `play` deliberately doesn't, matching how a *local* `playGame` never calls `maybeShowActionFlavor` either — the lesson's own outcome line is already the written moment, and a bonus caption on top would talk over it.
 
-### Play (a daily trick lesson)
+### Play (the hunt)
 
-`[PLAY]` has now had three answers to the same question. It began as a `YarnGame`
-reflex mini-game (3 timed rounds of "tap the target"), which was cut for feeling
-like mindlessly pressing buttons rather than caring for a cat. It became
-`NudgePicker`: a few canned lines you sent to the other device, which both
-applied a flat `play` reward and delivered the note. Photos were considered and
-rejected (too sensitive for a relay whose token "is not real auth"); a real-time
-two-person interaction was rejected (the two people are apart during the day);
-a plain flat button was rejected as still just a button.
+**This is slice 1 of four.** Combat, progression, inventory, equipment and the
+cat's appearance are five subsystems; building them as one change would leave
+nothing playable until the end. Shipped: combat, skills, one zone, XP/levels.
+Not built yet: loot and inventory (slice 2), equipment drawn on the cat and a
+palette that shifts with level (slice 3), the garden/shed/cellar (slice 4). A
+reader finding no inventory is not looking at a gap, but at a boundary. See
+`docs/superpowers/specs/2026-09-03-hunt-rpg-design.md`.
 
-The nudge is now gone too, for a reason none of that reasoning anticipated: **the
-relay was never deployed and is not planned.** `send()` is a no-op without it, so
-`[PLAY]` walked you through a menu to send a note to nobody and then applied a
-stat reward. The new goal is narrower and does not involve a second person at
-all — *give her a reason to open the app tomorrow* — so the third answer is
-fully offline. See `docs/superpowers/specs/2026-09-02-daily-trick-training-design.md`.
+`[PLAY]` has now had four answers. A `YarnGame` reflex mini-game (cut for
+feeling like button-mashing rather than caring for a cat); a nudge sent to the
+other device (cut because the relay was never deployed, so it sent to nobody);
+a daily trick lesson (shipped in v1.0.10); and now an RPG, because the brief
+changed from "a small daily ritual" to a game with skills, levels and loot.
 
-`[PLAY]` opens `TrickPanel` (same slot and render priority `NudgePicker` had, same
-`.ascii-screen` chrome). Three properties carry it:
+`[PLAY]` opens `QuestPanel` — same slot, same render priority, same
+`.ascii-screen` chrome its predecessors used. Three views off one local `view`
+state: `grounds` (level bar and zone list), `fight`, `result`.
 
-- **One lesson per calendar day.** The ritual is the limit. `lastLessonDay` stores
-  `YYYY-MM-DD` rather than a timestamp: a 24-hour timer drifts later every day and
-  eventually puts the ritual in the middle of the night.
-- **Agency without solvability.** Her mood for the day (`lessonMoodForDay`,
-  derived from the date so it holds still while you look at it — *not* `usePet`'s
-  stat-derived `Mood`) plus the approach you pick select a `Weighting`, which
-  weights a roll across `learned` / `almost` / `nothing`. The choice shifts odds,
-  it does not decide. `lessons.test.ts` enforces that each mood has exactly one
-  best/ok/poor approach and each approach is best for exactly two moods, so no
-  approach is globally correct and the game can't collapse into a lookup table.
-- **No dead screen.** Once the lesson is spent the panel lists what she already
-  knows and lets you ask for it, unlimited. Opening the app a second time is
-  never a wasted trip.
+**Every rule lives in `src/data/combat.ts`, which is pure.** No React, no
+storage, and no `Math.random()` inside — randomness arrives as an injected
+`rng: () => number`, so a whole fight replays exactly in a test and a bug can
+be reproduced from its rolls. `QuestPanel` only decides what to render and
+hands `Math.random` in. `takeTurn` returns a new state, or the state it was
+given when the move was not legal (unknown skill, or one still on cooldown) —
+so an illegal move never silently costs a turn.
 
-Notes on the details:
+Turn order inside `takeTurn`: the cat acts, the fight is checked for a win,
+the enemy acts unless stunned or fleeing, the fight is checked for a loss,
+then buffs and cooldowns tick. Buffs are set one higher than advertised
+(`SHARPEN_TURNS + 1`, `cooldown + 1`) precisely because that end-of-round tick
+also applies to the turn they were used on.
 
-- **Performing a trick changes no stats, deliberately.** It is unlimited, so
-  rewarding it would turn a delight into something to optimise. It only pops the
-  existing `play` glyph cue.
-- **The lesson still fires `playGame()` → the `play` care event.** Stats, growth
-  and the shared-pet sync are untouched, so this works unchanged the day a relay
-  appears. Rationing play does not slow the cat down: feed and clean are
-  unlimited, so play was never the growth bottleneck.
-- **The comedy is load-bearing.** A cat that ignores you is funnier than one that
-  obeys, so the refusal and `nothing` lines get the better writing, and progress
-  means failing less often rather than never.
-- **Trick progress lives in its own `catmagochi-tricks-v1` key, not `PetSave`.**
-  `PetSave` syncs as a care-event log; teaching is single-player, and putting it
-  in the synced save would mean designing a merge strategy for something that
-  needs none. It uses the same shape-validated load `usePet.loadSave()` does, and
-  `currentTrickId` is always recomputed from `learned` rather than trusted, so a
-  retired trick id can't wedge the state.
-- **No line may hardcode the cat's name.** `{name}` and `{trick}` are filled by
-  `fillLine()` at render time — the cat is whatever the user called it at
-  adoption.
-- **Learned tricks join the idle flavour pool** via `useFlavorText(mood, extra)`,
-  so she performs one unprompted now and then. The extra pool is keyed on a
-  joined string, since a fresh array each render would otherwise restart the loop
-  and blank the caption mid-display.
-- `useMessages.send()` is kept despite having no caller. It is fully tested and is
-  exactly what a relay deployment needs on day one; receiving, history and
-  `sender.html` all still use the rest of the hook.
+**Skills** (`src/data/skills.ts`) each cost something, so the choice is a read
+of the situation rather than "press the biggest number": `swipe` (lvl 1, free),
+`pounce` (lvl 2, big, 2-turn cooldown), `sharpen claws` (lvl 4, +2 damage for 3
+turns), `flatten ears` (lvl 6, negates one hit), `hiss` (lvl 8, costs the enemy
+a turn). Damage-free skills spend the turn, so all of them carry a cooldown —
+`skills.test.ts` enforces that, and that the level-1 skill has none, since a
+fight with every option on cooldown would deadlock.
+
+**Enemies** (`src/data/enemies.ts`) differ by *behaviour*, not just numbers:
+`plain` attacks every turn, `flee` bolts below `FLEE_THRESHOLD` (0.3) of its
+health, `windup` telegraphs a turn then hits hard. Four enemies with the same
+rule would be one enemy with four HP totals. Art is three lines of plain ASCII
+of equal width — it sits beside a much larger braille cat in a narrow panel, so
+it has to read at a glance and never change the panel's height. **Gotcha:** the
+kitchen boss does not flee because it is a `windup` enemy and never consults
+the flee rule at all — an earlier `steadfast` flag looked like it did that job
+but was unreachable, and a mutation check caught the test guarding it passing
+for the wrong reason.
+
+**Fighting is unlimited**, by explicit decision: HP restores fully between
+fights and losing costs only that fight. That moves the pacing burden onto
+content depth, which is why enemy behaviour is load-bearing rather than
+decorative. It also means the `play` care event has to be rationed some other
+way, or endless combat becomes an endless stat faucet: `useQuest`'s
+`recordWin` reports `firstWinToday`, and `App` fires `playGame()` only on that.
+Every other win just pops the glyph cue.
+
+**Quest state is in its own `catmagochi-quest-v1` key, not `PetSave`.**
+`PetSave` syncs between devices as a care-event log; a single-player campaign
+has no merge story. Loaded through the same shape-then-clamp approach
+`usePet.loadSave()` uses — `level`, `xp` and every clear count are clamped, and
+`zoneClears` keys are filtered through `zoneById` so a retired zone cannot keep
+state nothing can reach.
+
+**Gotcha:** a click handler in `QuestPanel` must not be named `use*`.
+`react-hooks/rules-of-hooks` treats any such name as a hook and fails the lint
+when it is called inside a callback; `chooseSkill` was briefly `useSkill`.
+
+**Gotcha:** any test that asserts on winning a fight must stub `Math.random`.
+`App.test.tsx`'s hunt tests were flaky without it — roughly one run in several
+lost the fight and the care-event assertion failed.
 
 
 ### Menu
@@ -142,7 +154,7 @@ Both this and `StatsWindow` get their modal behaviour from `src/hooks/useDialog.
 
 ### Stats window
 
-`src/components/StatsWindow.tsx` is a *separate* full-card overlay from `Menu` (own `statsOpen` state in `App.tsx`, opened by tapping the pet's name — see the `<h1>` gotcha above), not another `Menu` view — it needs `save`/`mood`/`stage` as direct props rather than living inside Menu's own state machine, and there was no obvious shared concern to justify coupling it to Menu's `view` union. Reuses `Menu.css`'s `.menu-overlay`/`.menu-panel`/`.menu-title`/`.menu-close` for the shared chrome (same "shared CSS file, component-specific rows" pattern as `AsciiCat.css`'s `.ascii-screen` reused by `TrickPanel`/`MessageView`), plus its own `StatsWindow.css` for the `.stats-row` label/value layout. Renders a flat `[label, value][]` array of rows (stage, mood, growth, `daysAgo(adoptedAt)`, the four stats rounded to whole percentages, then the four `total*` counters from `PetSave`) rather than hand-writing each row's JSX, so adding a new stat later is a one-line array entry.
+`src/components/StatsWindow.tsx` is a *separate* full-card overlay from `Menu` (own `statsOpen` state in `App.tsx`, opened by tapping the pet's name — see the `<h1>` gotcha above), not another `Menu` view — it needs `save`/`mood`/`stage` as direct props rather than living inside Menu's own state machine, and there was no obvious shared concern to justify coupling it to Menu's `view` union. Reuses `Menu.css`'s `.menu-overlay`/`.menu-panel`/`.menu-title`/`.menu-close` for the shared chrome (same "shared CSS file, component-specific rows" pattern as `AsciiCat.css`'s `.ascii-screen` reused by `QuestPanel`/`MessageView`), plus its own `StatsWindow.css` for the `.stats-row` label/value layout. Renders a flat `[label, value][]` array of rows (stage, mood, growth, `daysAgo(adoptedAt)`, the four stats rounded to whole percentages, then the four `total*` counters from `PetSave`) rather than hand-writing each row's JSX, so adding a new stat later is a one-line array entry.
 
 ### Push notifications
 
