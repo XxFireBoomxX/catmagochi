@@ -24,8 +24,6 @@ export interface Enemy {
   xp: number
   behaviour: Behaviour
   tells: { idle: string; windup: string; flee: string }
-  // Bosses hold their ground however hurt they are.
-  steadfast?: boolean
 }
 
 // Below this fraction of max HP a fleeing enemy tries to leave.
@@ -98,7 +96,6 @@ export const ENEMIES: Enemy[] = [
     damage: [3, 5],
     xp: 70,
     behaviour: 'windup',
-    steadfast: true,
     tells: {
       idle: 'it holds its ground and stares',
       windup: 'it rears up on its back legs',
